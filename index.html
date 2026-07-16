@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vertux Workspace</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0a0a0c" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="login" id="login" hidden>
+    <form class="login-card" id="loginForm">
+      <div class="login-mark">V</div>
+      <div class="login-title">Vertux Workspace</div>
+      <div class="login-sub">Вход для команды</div>
+      <input type="text" id="loginName" placeholder="ваше имя" autocomplete="name" hidden />
+      <input type="email" id="loginEmail" placeholder="почта" autocomplete="username" required />
+      <input type="password" id="loginPass" placeholder="пароль" autocomplete="current-password" required />
+      <input type="text" id="loginCode" placeholder="код приглашения" autocomplete="off" hidden />
+      <button type="submit" class="btn gold login-btn" id="loginBtn">Войти</button>
+      <div class="login-err" id="loginErr"></div>
+      <button type="button" class="login-toggle" id="loginToggle">Создать аккаунт</button>
+    </form>
+  </div>
+
+  <div id="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">V</div>
+        <div class="brand-text">
+          <span class="brand-name">VERTUX</span>
+          <span class="brand-sub">workspace</span>
+        </div>
+        <button class="collapse-btn" id="collapseBtn" title="Свернуть" aria-label="Свернуть меню">‹</button>
+      </div>
+
+      <nav class="nav" id="nav"></nav>
+
+      <div class="side-foot">
+        <div class="who">
+          <div class="ava" id="userAva">С</div>
+          <div class="who-text">
+            <span class="who-name" id="userName">Степан</span>
+            <span class="who-role" id="userRole">основатель</span>
+          </div>
+          <button class="logout-btn" id="logoutBtn" title="Выйти" aria-label="Выйти" hidden>⏻</button>
+        </div>
+        <div class="src" id="srcPill" title="Источник данных">
+          <span class="dot"></span><span id="srcLabel">демо-данные</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumb">
+          <h1 id="pageTitle">Дашборд</h1>
+          <span class="crumb-sub" id="pageSub"></span>
+        </div>
+        <div class="top-actions">
+          <div class="search">
+            <span class="s-ic">⌕</span>
+            <input id="globalSearch" type="text" placeholder="Поиск по проектам, лидам…" />
+          </div>
+          <button class="btn ghost" id="refreshBtn" title="Обновить">⟳</button>
+        </div>
+      </header>
+
+      <section class="view" id="view"><!-- rendered by app.js --></section>
+    </main>
+
+    <div class="drawer-scrim" id="drawerScrim"></div>
+    <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+    <div id="modal"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="data.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+  <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(function(){});}</script>
+</body>
+</html>
