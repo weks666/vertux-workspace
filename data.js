@@ -52,13 +52,14 @@ function rowsToObjects(rows){
     const o={}; head.forEach((h,i)=>{ o[h]=r[i]==null?'':String(r[i]).trim(); }); return o;
   });
 }
-/* SheetJS подгружаем только если реально бросили .xlsx */
+/* SheetJS подгружаем только если реально бросили .xlsx.
+ * Файл лежит рядом (vendor/) — CDN в РФ заблокирован. */
 let xlsxLoading=null;
 function loadXLSX(){
   if(window.XLSX) return Promise.resolve(window.XLSX);
   if(!xlsxLoading) xlsxLoading=new Promise((res,rej)=>{
     const s=document.createElement('script');
-    s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.src='vendor/xlsx.full.min.js';
     s.onload=()=>res(window.XLSX); s.onerror=()=>rej(new Error('не удалось загрузить читалку XLSX'));
     document.head.appendChild(s);
   });

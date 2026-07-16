@@ -1,5 +1,5 @@
-const CACHE = 'vertux-workspace-v5';
-const ASSETS = ['./', './index.html', './styles.css', './data.js', './auth.js', './app.js', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'vertux-workspace-v6';
+const ASSETS = ['./', './index.html', './styles.css', './data.js', './auth.js', './app.js', './manifest.webmanifest', './icon.svg', './vendor/supabase.js', './vendor/xlsx.full.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));

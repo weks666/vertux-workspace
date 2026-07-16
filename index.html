@@ -40,15 +40,15 @@
 
       <div class="side-foot">
         <div class="who">
-          <div class="ava" id="userAva">С</div>
+          <div class="ava" id="userAva">·</div>
           <div class="who-text">
-            <span class="who-name" id="userName">Степан</span>
-            <span class="who-role" id="userRole">основатель</span>
+            <span class="who-name" id="userName">загрузка…</span>
+            <span class="who-role" id="userRole"></span>
           </div>
           <button class="logout-btn" id="logoutBtn" title="Выйти" aria-label="Выйти" hidden>⏻</button>
         </div>
         <div class="src" id="srcPill" title="Источник данных">
-          <span class="dot"></span><span id="srcLabel">демо-данные</span>
+          <span class="dot"></span><span id="srcLabel">подключаюсь…</span>
         </div>
       </div>
     </aside>
@@ -76,7 +76,8 @@
     <div id="modal"></div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Библиотеки лежат рядом: CDN (jsdelivr) в РФ заблокирован, без VPN страница висла. -->
+  <script src="vendor/supabase.js"></script>
   <script src="data.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>
