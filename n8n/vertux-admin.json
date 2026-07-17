@@ -1,0 +1,194 @@
+{
+  "name": "Vertux Admin",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vertux-admin",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-420, 0],
+      "webhookId": "vertux-admin"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vertux Admin — вход: list_users | set_role. Роль owner выдать через API нельзя.\nconst inp = $input.first().json;\nconst b = inp.body || {};\nconst auth = (inp.headers && (inp.headers.authorization || inp.headers.Authorization)) || '';\nconst action = String(b.action || '');\nif (!auth) return [{ json: { error: 'not_authenticated' } }];\nif (!['list_users', 'set_role'].includes(action)) return [{ json: { error: 'unknown_action' } }];\nlet targetId = '', newRole = '';\nif (action === 'set_role') {\n  targetId = String(b.targetId || '');\n  newRole = String(b.role || '');\n  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)) return [{ json: { error: 'bad_target' } }];\n  if (!['admin', 'manager', 'viewer'].includes(newRole)) return [{ json: { error: 'bad_role' } }];\n}\nreturn [{ json: { ok: true, auth: auth, action: action, targetId: targetId, newRole: newRole } }];"
+      },
+      "name": "Pre",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "pre-ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Pre OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error || 'bad_request' }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "name": "Respond Err",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [180, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://vertuxdb.duckdns.org/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI" },
+            { "name": "Authorization", "value": "={{ $json.auth }}" }
+          ]
+        },
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [180, -20]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Права: list_users — owner/admin; set_role — только owner и не самому себе.\nconst caller = $input.first().json;\nconst req = $('Pre').first().json;\nconst role = (caller.app_metadata && caller.app_metadata.role) || '';\nif (!caller.id) return [{ json: { error: 'not_authenticated' } }];\nif (req.action === 'list_users') {\n  if (!['owner', 'admin'].includes(role)) return [{ json: { error: 'forbidden' } }];\n  return [{ json: { ok: true, action: 'list_users' } }];\n}\nif (role !== 'owner') return [{ json: { error: 'forbidden_owner_only' } }];\nif (req.targetId === caller.id) return [{ json: { error: 'self_change' } }];\nreturn [{ json: { ok: true, action: 'set_role', targetId: req.targetId, newRole: req.newRole } }];"
+      },
+      "name": "Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [380, -20]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "gate-ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Gate OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [580, -20]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "is-list", "leftValue": "={{ $json.action }}", "rightValue": "list_users", "operator": { "type": "string", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "List?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [780, -40]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, email, coalesce(raw_user_meta_data->>'name','') AS name, coalesce(raw_app_meta_data->>'role','viewer') AS role, created_at, last_sign_in_at FROM auth.users ORDER BY created_at;",
+        "options": {}
+      },
+      "name": "PG List",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [980, -120],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const users = $input.all().map(i => i.json).filter(u => u && u.id);\nreturn [{ json: { users: users } }];"
+      },
+      "name": "Wrap List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, -120]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE auth.users SET raw_app_meta_data = jsonb_set(coalesce(raw_app_meta_data,'{}'::jsonb), '{role}', to_jsonb($1::text)) WHERE id = $2::uuid RETURNING id;",
+        "options": { "queryReplacement": "={{ $json.newRole }},{{ $json.targetId }}" }
+      },
+      "name": "PG SetRole",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [980, 60],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const n = $input.all().filter(i => i.json && i.json.id).length;\nreturn [{ json: { ok: true, changed: n } }];"
+      },
+      "name": "Wrap Set",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, -30]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Pre", "type": "main", "index": 0 }]] },
+    "Pre": { "main": [[{ "node": "Pre OK?", "type": "main", "index": 0 }]] },
+    "Pre OK?": {
+      "main": [
+        [{ "node": "Auth Check", "type": "main", "index": 0 }],
+        [{ "node": "Respond Err", "type": "main", "index": 0 }]
+      ]
+    },
+    "Auth Check": { "main": [[{ "node": "Gate", "type": "main", "index": 0 }]] },
+    "Gate": { "main": [[{ "node": "Gate OK?", "type": "main", "index": 0 }]] },
+    "Gate OK?": {
+      "main": [
+        [{ "node": "List?", "type": "main", "index": 0 }],
+        [{ "node": "Respond Err", "type": "main", "index": 0 }]
+      ]
+    },
+    "List?": {
+      "main": [
+        [{ "node": "PG List", "type": "main", "index": 0 }],
+        [{ "node": "PG SetRole", "type": "main", "index": 0 }]
+      ]
+    },
+    "PG List": { "main": [[{ "node": "Wrap List", "type": "main", "index": 0 }]] },
+    "Wrap List": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] },
+    "PG SetRole": { "main": [[{ "node": "Wrap Set", "type": "main", "index": 0 }]] },
+    "Wrap Set": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

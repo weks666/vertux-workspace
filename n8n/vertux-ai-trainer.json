@@ -1,0 +1,164 @@
+{
+  "name": "Vertux AI Trainer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vertux-ai-trainer",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-380, 0],
+      "webhookId": "vertux-ai-trainer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vertux AI Trainer — Gate: собирает промпт под режим, режет длину входа.\n// Модель меняется тут:\nconst MODEL = 'openai/gpt-4o-mini';\n\nconst inp = $input.first().json;\nconst b = inp.body || {};\nconst auth = (inp.headers && (inp.headers.authorization || inp.headers.Authorization)) || '';\nconst cut = (s, n) => String(s || '').slice(0, n);\nconst mode = String(b.mode || '');\nconst niche = cut(b.niche, 80), city = cut(b.city, 40), issues = cut(b.issues, 600), script = cut(b.script, 4000);\nlet messages = null, max_tokens = 500, temperature = 0.4;\n\nif (!auth) return [{ json: { error: 'not_authenticated' } }];\n\nif (mode === 'suffler') {\n  const tr = cut(b.transcript, 6000);\n  if (tr.length < 10) return [{ json: { error: 'empty_transcript' } }];\n  messages = [\n    { role: 'system', content: 'Ты — опытный тренер холодных продаж, работаешь live-суфлёром менеджера веб-студии Vertux (делаем сайты и AI-виджеты малому бизнесу). Тебе приходит хвост разговора, распознанный с микрофона: возможны ошибки распознавания и склеенные реплики — догадывайся по смыслу. Дай 2–4 подсказки, что менеджеру сказать ПРЯМО СЕЙЧАС. Каждая подсказка: готовая живая фраза, которую можно произнести дословно, и в скобках коротко зачем она. Если клиент возразил — отработай возражение по-человечески: сначала присоединись, потом уточняющий вопрос или выгода, без давления и без заученных штампов. Скрипт звонка, если он дан, — опора, а не клетка: улучшай его формулировки, говори разговорным языком, конкретика вместо «уникальных предложений» и канцелярита. Не повторяй подсказку, которую уже давал по этому же возражению. Каждая подсказка с новой строки, начинается с «→».' },\n    { role: 'user', content: (script ? 'СКРИПТ ЗВОНКА (опора):\\n' + script + '\\n\\n' : '') + (issues ? 'БОЛЯЧКИ САЙТА КЛИЕНТА (зацепки): ' + issues + '\\n\\n' : '') + 'РАЗГОВОР (последние реплики, менеджер и клиент вперемешку):\\n' + tr }\n  ];\n  max_tokens = 380;\n} else if (mode === 'review') {\n  const tr = cut(b.transcript, 12000);\n  if (tr.length < 40) return [{ json: { error: 'empty_transcript' } }];\n  messages = [\n    { role: 'system', content: 'Ты — тренер отдела продаж веб-студии Vertux (холодные звонки малому бизнесу: сайты, AI-виджеты). Разбери транскрипт звонка. Отвечай по-русски, строго в формате:\\nОЦЕНКА: X/10\\nЧТО СРАБОТАЛО:\\n- …\\nОШИБКИ:\\n- …\\nСОВЕТЫ НА СЛЕДУЮЩИЙ ЗВОНОК:\\n- … (ровно 3 совета)' + (script ? '\\nДан скрипт звонка — отдельной строкой отметь, какие ступени пройдены, какие пропущены.\\nСКРИПТ:\\n' + script : '') },\n    { role: 'user', content: 'ТРАНСКРИПТ:\\n' + tr }\n  ];\n  max_tokens = 700;\n} else if (mode === 'roleplay') {\n  const hist = Array.isArray(b.history) ? b.history.slice(-14) : [];\n  const diff = ['лояльный', 'занятой', 'жёсткий'].includes(b.difficulty) ? b.difficulty : 'занятой';\n  messages = [{ role: 'system', content: 'Ты играешь КЛИЕНТА в тренажёре холодных звонков. Твоя роль: владелец бизнеса' + (niche ? ' «' + niche + '»' : ' (малый бизнес)') + (city ? ', город ' + city : '') + '. Характер: ' + diff + '.' + (issues ? ' У твоего сайта есть проблемы: ' + issues + '.' : '') + ' Тебе звонит менеджер веб-студии. Отвечай как живой занятой человек: коротко, 1–3 предложения, с типичными возражениями (нет времени, дорого, уже есть сайт, вышлите на почту). Не выходи из роли и не помогай менеджеру. Если менеджер честно и хорошо отрабатывает возражения — постепенно смягчайся, в конце соглашайся посмотреть демку.' }];\n  for (const m of hist) messages.push({ role: m.who === 'm' ? 'user' : 'assistant', content: cut(m.text, 1200) });\n  max_tokens = 260; temperature = 0.85;\n} else if (mode === 'debrief') {\n  const hist = Array.isArray(b.history) ? b.history.slice(-30) : [];\n  const dialog = hist.filter(m => m.who === 'm' || m.who === 'c').map(m => (m.who === 'm' ? 'МЕНЕДЖЕР: ' : 'КЛИЕНТ: ') + cut(m.text, 1200)).join('\\n');\n  if (dialog.length < 20) return [{ json: { error: 'empty_history' } }];\n  messages = [\n    { role: 'system', content: 'Ты — тренер отдела продаж. Ниже тренировочный холодный звонок: менеджер тренировался на ИИ-клиенте. Разбери работу МЕНЕДЖЕРА по-русски, строго в формате:\\nОЦЕНКА: X/10\\nЧТО СРАБОТАЛО:\\n- …\\nОШИБКИ:\\n- …\\nСОВЕТЫ:\\n- … (ровно 3 совета). Коротко и конкретно.' },\n    { role: 'user', content: dialog }\n  ];\n  max_tokens = 600;\n} else {\n  return [{ json: { error: 'unknown_mode' } }];\n}\n\nreturn [{ json: { ok: true, auth: auth, payload: { model: MODEL, messages: messages, max_tokens: max_tokens, temperature: temperature } } }];"
+      },
+      "name": "Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "gate-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Gate OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [60, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error || 'bad_request' }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "name": "Respond Bad",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [280, 160]
+    },
+    {
+      "parameters": {
+        "url": "https://vertuxdb.duckdns.org/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI" },
+            { "name": "Authorization", "value": "={{ $json.auth }}" }
+          ]
+        },
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, -60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "authed",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Authed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [500, -60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'not_authenticated' }) }}",
+        "options": { "responseCode": 401 }
+      },
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Gate').item.json.payload) }}",
+        "options": {}
+      },
+      "name": "OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\nconst t = (c.choices && c.choices[0] && c.choices[0].message && c.choices[0].message.content) || '';\nif (!t) return [{ json: { error: 'llm_empty' } }];\nreturn [{ json: { text: t } }];"
+      },
+      "name": "Extract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, -120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1160, -120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Gate", "type": "main", "index": 0 }]] },
+    "Gate": { "main": [[{ "node": "Gate OK?", "type": "main", "index": 0 }]] },
+    "Gate OK?": {
+      "main": [
+        [{ "node": "Auth Check", "type": "main", "index": 0 }],
+        [{ "node": "Respond Bad", "type": "main", "index": 0 }]
+      ]
+    },
+    "Auth Check": { "main": [[{ "node": "Authed?", "type": "main", "index": 0 }]] },
+    "Authed?": {
+      "main": [
+        [{ "node": "OpenRouter", "type": "main", "index": 0 }],
+        [{ "node": "Respond 401", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenRouter": { "main": [[{ "node": "Extract", "type": "main", "index": 0 }]] },
+    "Extract": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,308 @@
+{
+  "name": "Vertux Rockfeller",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vertux-rockfeller",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-640, 0],
+      "webhookId": "vertux-rockfeller"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inp = $input.first().json;\nconst b = inp.body || {};\nconst auth = (inp.headers && (inp.headers.authorization || inp.headers.Authorization)) || '';\nif (!auth) return [{ json: { error: 'not_authenticated' } }];\nlet limit = parseInt(b.limit, 10);\nif (!isFinite(limit)) limit = 5;\nlimit = Math.max(1, Math.min(15, limit));\nreturn [{ json: { ok: true, auth: auth, limit: limit } }];"
+      },
+      "name": "Pre",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-440, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "pre-ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Pre OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-240, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error || 'bad_request' }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "name": "Respond Err",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-40, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://vertuxdb.duckdns.org/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI" },
+            { "name": "Authorization", "value": "={{ $json.auth }}" }
+          ]
+        },
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "name": "Auth Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-40, -20]
+    },
+    {
+      "parameters": {
+        "jsCode": "const caller = $input.first().json;\nconst req = $('Pre').first().json;\nconst role = (caller.app_metadata && caller.app_metadata.role) || '';\nif (!caller.id) return [{ json: { error: 'not_authenticated' } }];\nif (!['owner', 'admin', 'manager'].includes(role)) return [{ json: { error: 'forbidden' } }];\nreturn [{ json: { ok: true, limit: req.limit } }];"
+      },
+      "name": "Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, -20]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "gate-ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Gate OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [360, -20]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, company, niche, city, site, rating, reviews FROM public.projects WHERE processed IS DISTINCT FROM true ORDER BY rating DESC NULLS LAST LIMIT {{ $('Gate').first().json.limit }};",
+        "options": {}
+      },
+      "name": "PG Select",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [560, -40],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "any", "leftValue": "={{ $json.id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Any?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [760, -40]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, enriched: 0, note: 'сырых лидов нет' }) }}",
+        "options": {}
+      },
+      "name": "Respond Empty",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 140]
+    },
+    {
+      "parameters": { "options": {} },
+      "name": "Queue",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [960, -60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, done: true }) }}",
+        "options": {}
+      },
+      "name": "Respond Done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1160, -180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "has-site", "leftValue": "={{ $json.site }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Site?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1160, 20]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.site }}",
+        "options": {
+          "timeout": 9000,
+          "allowUnauthorizedCerts": true,
+          "response": { "response": { "neverError": true, "responseFormat": "text", "outputPropertyName": "data" } }
+        }
+      },
+      "name": "Fetch Site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, -60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Собираем промпт «Рокфеллера» для одного лида. Модель меняется тут:\nconst MODEL = 'openai/gpt-4o-mini';\nconst SYS = 'Ты — «Рокфеллер», аналитик-обогатитель базы холодных лидов веб-студии Vertux (Санкт-Петербург; делает сайты и AI-виджеты малому бизнесу). По данным о компании (и HTML её сайта, если он есть) верни СТРОГО один JSON-объект без markdown и без пояснений, все тексты по-русски:\\n{\"type\": \"creation\"|\"redesign\", \"issues\": \"...\", \"context\": \"...\", \"call_script\": \"...\", \"gen_prompt\": \"...\"}\\nПравила:\\n- type=redesign ТОЛЬКО если у компании есть настоящий сайт (не соцсеть/каталог), иначе creation.\\n- issues: конкретные болячки текущего сайта в 1–3 предложениях (адаптивность, форма заявки, скорость, устаревший вид, https). Если сайта нет — одним предложением, сколько клиентов бизнес теряет без сайта в его нише.\\n- context: 2–4 коротких факта о компании для разговора (из текста сайта, рубрик, рейтинга) — то, что покажет клиенту «мы про вас узнали».\\n- call_script: живой скрипт холодного звонка по ступеням, дословные фразы менеджера, разговорный язык без канцелярита, привязанный к болячкам ИМЕННО этой компании. Формат: «Ступень 1 — Внимание: \\\"...\\\" Ступень 2 — Интерес: \\\"...\\\" Ступень 3 — Выгода: \\\"...\\\" Ступень 4 — Демка: \\\"...\\\" Ступень 5 — Закрытие: \\\"...\\\"». В ступени «Демка» предлагай бесплатную демо-версию сайта, которую мы уже сделали.\\n- gen_prompt: подробный промпт для ИИ-генератора демо-лендинга этой компании: роль (senior frontend + арт-директор), ниша и город, структура секций под нишу, стиль и палитра под характер бизнеса, реалистичные русские тексты без лорем-ипсум, кириллические шрифты self-host, адаптивность, форма заявки.';\nconst lead = $('Queue').item.json;\nlet html = typeof $json.data === 'string' ? $json.data : '';\nhtml = html.replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ');\nconst text = html.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 3500);\nconst hasViewport = /name=[\"']viewport/i.test(html);\nconst hasForm = /<form/i.test(html);\nconst user = 'КОМПАНИЯ: ' + (lead.company || '') + '\\nРУБРИКИ: ' + (lead.niche || '') + '\\nГОРОД: ' + (lead.city || '') + '\\nРЕЙТИНГ 2GIS: ' + (lead.rating != null ? lead.rating : '—') + ' (' + (lead.reviews || 0) + ' отзывов)' + '\\nСАЙТ: ' + (lead.site || 'нет') + (text ? '\\nПРИЗНАКИ САЙТА: viewport meta ' + (hasViewport ? 'есть' : 'НЕТ') + ', форма заявки ' + (hasForm ? 'есть' : 'не найдена') + '\\nТЕКСТ САЙТА (вырезка): ' + text : '');\nreturn [{ json: { payload: { model: MODEL, messages: [{ role: 'system', content: SYS }, { role: 'user', content: user }], max_tokens: 1600, temperature: 0.6 }, leadId: lead.id, hasSite: !!lead.site } }];"
+      },
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 20]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "name": "OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\nconst raw = ((c.choices || [])[0] || { message: {} }).message.content || '';\nconst s = raw.indexOf('{'), e = raw.lastIndexOf('}');\nlet obj = null;\ntry { obj = JSON.parse(raw.slice(s, e + 1)); } catch (err) {}\nconst prev = $('Build Prompt').item.json;\nif (!obj || !obj.call_script) return [{ json: { skip: true, leadId: prev.leadId } }];\nconst cut = (x, n) => String(x || '').slice(0, n);\nconst t = obj.type === 'creation' ? 'creation' : (obj.type === 'redesign' && prev.hasSite ? 'redesign' : (prev.hasSite ? 'redesign' : 'creation'));\nreturn [{ json: { skip: false, leadId: prev.leadId, type: t, issues: cut(obj.issues, 1500), context: cut(obj.context, 2000), call_script: cut(obj.call_script, 6000), gen_prompt: cut(obj.gen_prompt, 6000) } }];"
+      },
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 20]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "parsed", "leftValue": "={{ $json.skip }}", "rightValue": true, "operator": { "type": "boolean", "operation": "false", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Parsed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2160, 20]
+    },
+    {
+      "parameters": {
+        "schema": { "__rl": true, "value": "public", "mode": "list" },
+        "table": { "__rl": true, "value": "projects", "mode": "list" },
+        "operation": "update",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.leadId }}",
+            "type": "={{ $json.type }}",
+            "issues": "={{ $json.issues }}",
+            "context": "={{ $json.context }}",
+            "call_script": "={{ $json.call_script }}",
+            "gen_prompt": "={{ $json.gen_prompt }}",
+            "processed": true,
+            "updated_at": "={{ $now }}"
+          },
+          "matchingColumns": ["id"]
+        },
+        "options": {}
+      },
+      "name": "Update Lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2360, -40]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Pre", "type": "main", "index": 0 }]] },
+    "Pre": { "main": [[{ "node": "Pre OK?", "type": "main", "index": 0 }]] },
+    "Pre OK?": {
+      "main": [
+        [{ "node": "Auth Check", "type": "main", "index": 0 }],
+        [{ "node": "Respond Err", "type": "main", "index": 0 }]
+      ]
+    },
+    "Auth Check": { "main": [[{ "node": "Gate", "type": "main", "index": 0 }]] },
+    "Gate": { "main": [[{ "node": "Gate OK?", "type": "main", "index": 0 }]] },
+    "Gate OK?": {
+      "main": [
+        [{ "node": "PG Select", "type": "main", "index": 0 }],
+        [{ "node": "Respond Err", "type": "main", "index": 0 }]
+      ]
+    },
+    "PG Select": { "main": [[{ "node": "Any?", "type": "main", "index": 0 }]] },
+    "Any?": {
+      "main": [
+        [{ "node": "Queue", "type": "main", "index": 0 }],
+        [{ "node": "Respond Empty", "type": "main", "index": 0 }]
+      ]
+    },
+    "Queue": {
+      "main": [
+        [{ "node": "Respond Done", "type": "main", "index": 0 }],
+        [{ "node": "Site?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Site?": {
+      "main": [
+        [{ "node": "Fetch Site", "type": "main", "index": 0 }],
+        [{ "node": "Build Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Site": { "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]] },
+    "Build Prompt": { "main": [[{ "node": "OpenRouter", "type": "main", "index": 0 }]] },
+    "OpenRouter": { "main": [[{ "node": "Parse", "type": "main", "index": 0 }]] },
+    "Parse": { "main": [[{ "node": "Parsed?", "type": "main", "index": 0 }]] },
+    "Parsed?": {
+      "main": [
+        [{ "node": "Update Lead", "type": "main", "index": 0 }],
+        [{ "node": "Queue", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Lead": { "main": [[{ "node": "Queue", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
