@@ -36,7 +36,7 @@
     const meta = u.user_metadata || {};
     const app = u.app_metadata || {};
     const key = ROLES[app.role] ? app.role : 'viewer';
-    return { email: u.email, name: meta.name || u.email.split('@')[0], roleKey: key, role: ROLES[key].label, can: ROLES[key] };
+    return { id: u.id, email: u.email, name: meta.name || u.email.split('@')[0], roleKey: key, role: ROLES[key].label, can: ROLES[key] };
   }
 
   async function signIn(email, password) {

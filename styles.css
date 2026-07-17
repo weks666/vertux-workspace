@@ -232,6 +232,8 @@ table.leads th.c-ra{cursor:help;text-decoration:underline dotted;text-underline-
 .mini.make{background:rgba(124,92,255,.14);border-color:var(--gold-dim);color:var(--violet)}
 .mini.make:hover{background:rgba(124,92,255,.24)}
 .mini.go{color:var(--blue);border-color:rgba(79,157,255,.3)}
+.mini.del{padding:3px 8px;color:var(--muted-2);border-color:transparent;background:none}
+.mini.del:hover{color:var(--red);border-color:rgba(255,95,87,.4);background:rgba(255,95,87,.08)}
 
 /* ---------- Напоминания ---------- */
 .due-panel{border-color:rgba(254,188,46,.35)}

@@ -11,10 +11,11 @@ const CONFIG = {
   // edge-функции widget-bridge (см. backend/README.md).
   bridgeUrl: '',
 
-  // AI-тренер звонков: вебхук воркфлоу «Vertux AI Trainer» в n8n
-  // (backend/n8n_vertux_ai_trainer.json — импортировать, выбрать кредензию OpenRouter).
-  // Пусто → live-транскрипция работает, подсказки/разбор/тренажёр пишут «не подключено».
-  aiUrl: '',
+  // Вебхуки n8n (воркфлоу лежат в папке n8n/ репозитория — Import from URL, выбрать
+  // кредензию, Activate). Пока воркфлоу не активирован, кнопки честно скажут об этом.
+  aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
+  adminUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-admin',
+  enrichUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-rockfeller',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
@@ -258,10 +259,9 @@ async function runImport(plan, mode, onProgress){
   return report;
 }
 
-/* ---------- AI-тренер (через вебхук n8n, ключ OpenRouter живёт там) ---------- */
-async function aiCall(mode, payload){
-  const url=CONFIG.aiUrl;
-  if(!url) throw new Error('ai_not_configured');
+/* ---------- Вебхуки n8n (ключи и SQL живут на сервере, не в браузере) ---------- */
+async function hookCall(url, payload){
+  if(!url) throw new Error('не настроено');
   let token='';
   try{
     const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
@@ -270,12 +270,16 @@ async function aiCall(mode, payload){
   const res=await fetch(url,{
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
-    body:JSON.stringify({ mode:mode, ...(payload||{}) }),
+    body:JSON.stringify(payload||{}),
   });
+  if(res.status===404) throw new Error('воркфлоу не активирован в n8n (импорт из папки n8n/ + Activate)');
   const j=await res.json().catch(()=>({}));
   if(!res.ok||j.error) throw new Error(j.error||('HTTP '+res.status));
-  return j; /* {text:'…'} */
+  return j;
 }
+const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
+const adminCall=(action,payload)=>hookCall(CONFIG.adminUrl,{ action:action, ...(payload||{}) });
+const enrichCall=(limit)=>hookCall(CONFIG.enrichUrl,{ limit:limit });
 
 async function loadData(){
   const projects=await loadProjects();
@@ -285,7 +289,7 @@ async function loadData(){
 window.VC = {
   CONFIG, loadData, loadProjects,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw,
-  logCall, callsOf, aiCall,
+  logCall, callsOf, aiCall, adminCall, enrichCall,
   readFileRows, detectFormat, mapRows, planImport, runImport,
   FORMATS,
 };

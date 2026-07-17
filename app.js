@@ -316,13 +316,14 @@
       <span class="sub">журнал пишется, когда жмёшь «Набрать»</span></div>
       <div class="panel-b">${barChart(callsByDay(14),'Журнал пуст. Он заполнится сам — жми «Набрать» в списке лидов.')}</div></div>
     <div class="cols" style="margin-top:16px">
-      <div class="panel"><div class="panel-h"><h3>История</h3><span class="sub">последние 40</span></div>
-        ${calls.length?`<table class="data"><thead><tr><th>Компания</th><th>Итог</th><th>Кто</th><th>Когда</th></tr></thead><tbody>
+      <div class="panel"><div class="panel-h"><h3>История</h3><span class="sub">последние 40 · ✕ убирает случайную запись</span></div>
+        ${calls.length?`<table class="data"><thead><tr><th>Компания</th><th>Итог</th><th>Кто</th><th>Когда</th><th></th></tr></thead><tbody>
           ${calls.slice(0,40).map(c=>`<tr data-id="${esc(c.p.id)}">
             <td><b>${esc(c.p.company)}</b></td>
-            <td>${(OUTCOMES[c.out]||{ic:'📞'}).ic} ${esc((OUTCOMES[c.out]||{label:'набрали'}).label)}</td>
+            <td>${(OUTCOMES[c.out]||{ic:'📞'}).ic} ${esc((OUTCOMES[c.out]||{label:'набрали, итог не отмечен'}).label)}</td>
             <td class="mut">${esc(c.by||'—')}</td>
-            <td class="mut">${esc(ago(c.at))}</td></tr>`).join('')}
+            <td class="mut">${esc(ago(c.at))}</td>
+            <td>${(USER&&USER.can&&USER.can.edit)?`<button class="mini del" data-delcall="${esc(c.p.id)}::${esc(c.at)}" title="убрать запись">✕</button>`:''}</td></tr>`).join('')}
         </tbody></table>`:`<div class="panel-b"><div class="empty"><div class="e-ic">📭</div><div>Пока пусто</div></div></div>`}</div>
       <div class="panel"><div class="panel-h"><h3>Кто сколько набрал</h3></div>
         <div class="panel-b">${Object.keys(byPerson).length?Object.entries(byPerson).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
@@ -406,6 +407,11 @@
   };
 
   V.team=()=>`
+    ${(USER&&USER.can&&USER.can.invite)?`
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-h"><h3>Сотрудники</h3><span class="sub">кто в команде, когда заходил, какой уровень</span></div>
+      <div id="teamList"><div class="panel-b"><div class="empty"><div class="e-ic">👥</div><div>загружаю список…</div></div></div></div>
+    </div>`:''}
     <div class="panel">
       <div class="panel-h"><h3>Уровни доступа</h3><span class="sub">права проверяются в самой базе, не только в интерфейсе</span></div>
       <div class="panel-b"><table class="data"><thead><tr>
@@ -434,6 +440,44 @@
         <div id="inviteOut" style="margin-top:6px"></div>
       </div>
     </div>`:`<div class="hint" style="margin-top:16px"><span>🔒</span><div>Приглашать сотрудников может только основатель или администратор.</div></div>`}`;
+
+  async function renderTeam(){
+    const box=$('#teamList'); if(!box) return;
+    try{
+      const j=await window.VC.adminCall('list_users');
+      const users=j.users||[];
+      const canRoles=!!(USER&&USER.can&&USER.can.roles);
+      box.innerHTML=`<table class="data"><thead><tr>
+        <th>Сотрудник</th><th>Уровень</th><th>Появился</th><th>Был в сети</th>
+      </tr></thead><tbody>${users.map(u=>{
+        const isSelf=USER&&USER.id===u.id, isOwner=u.role==='owner';
+        const label=((window.VCAuth.ROLES[u.role]||{}).label)||u.role;
+        return `<tr style="cursor:default">
+        <td><div class="co"><div class="logo s-cont">${initials(u.name||u.email)}</div>
+          <div class="co-t"><span class="cn">${esc(u.name||'—')}${isSelf?' <span class="pill s-demo"><i></i>это вы</span>':''}</span>
+          <span class="csub">${esc(u.email)}</span></div></div></td>
+        <td>${(canRoles&&!isSelf&&!isOwner)?`<select class="stage-sel s-cont" data-role-user="${esc(u.id)}">
+            ${['admin','manager','viewer'].map(r=>`<option value="${r}"${u.role===r?' selected':''}>${window.VCAuth.ROLES[r].label}</option>`).join('')}
+          </select>`:`<span class="pill ${isOwner?'s-agr':'s-cont'}"><i></i>${esc(label)}</span>`}</td>
+        <td class="mut">${esc(String(u.created_at||'').slice(0,10))}</td>
+        <td class="mut">${u.last_sign_in_at?esc(ago(u.last_sign_in_at)):'ещё не заходил'}</td>
+      </tr>`;}).join('')}</tbody></table>`;
+      $$('select[data-role-user]',box).forEach(s=>{
+        const before=s.value;
+        s.onchange=async()=>{
+          s.disabled=true;
+          try{
+            await window.VC.adminCall('set_role',{ targetId:s.dataset.roleUser, role:s.value });
+            s.classList.remove('s-cont'); s.classList.add('s-paid');
+            setTimeout(()=>{ s.classList.remove('s-paid'); s.classList.add('s-cont'); },1200);
+          }catch(e){ s.value=before; alert('Роль не поменялась: '+(e.message||e)); }
+          finally{ s.disabled=false; }
+        };
+      });
+    }catch(e){
+      box.innerHTML=`<div class="panel-b"><div class="hint" style="margin:0"><span>🔌</span><div>Список сотрудников появится после активации воркфлоу <b>Vertux Admin</b> в n8n (папка <code>n8n/</code> в репо). Сейчас: ${esc(e.message||e)}</div></div></div>`;
+    }
+  }
 
   async function renderInvites(){
     const out=$('#inviteOut'); if(!out) return;
@@ -747,8 +791,22 @@
   V.import=()=>{
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     if(!canEdit) return `<div class="hint"><span>🔒</span><div>Импортировать данные может основатель, администратор или менеджер.</div></div>`;
+    const rawN=DATA.projects.filter(p=>!p.processed).length;
     return `
     <div class="hint"><span>📥</span><div>Кидай сюда <b>CSV</b> или <b>XLSX</b> — из 2GIS-парсера (сырьё) или из Рокфеллера (готовый список со скриптами). Формат определится сам, а перед записью покажу, что изменится.</div></div>
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-h"><h3>🪄 ИИ-Рокфеллер</h3><span class="sub">${plural(rawN,'сырой лид','сырых лида','сырых лидов')} в базе</span></div>
+      <div class="panel-b">
+        <div class="row-inline">
+          <span class="mut" style="font-size:13px">Обогатить</span>
+          <select id="enrichN"><option>5</option><option selected>10</option><option>15</option></select>
+          <span class="mut" style="font-size:13px">лидов</span>
+          <button class="btn gold" id="enrichBtn" ${rawN?'':'disabled'}>Прогнать через ИИ</button>
+          <span id="enrichMsg" class="mut" style="font-size:12.5px"></span>
+        </div>
+        <div class="mut" style="font-size:12px;margin-top:8px">Берёт самых рейтинговых из сырых, заглядывает на их сайты и пишет: тип (редизайн/с нуля), болячки, контекст, скрипт звонка и промпт демки — как Рокфеллер, только сам. Примерно 20–40 секунд на лида.</div>
+      </div>
+    </div>
     <div class="drop" id="drop">
       <div class="drop-ic">⬆</div>
       <div class="drop-t">Перетащи файл сюда</div>
@@ -855,6 +913,21 @@
   }
 
   function wireImport(){
+    const eb=$('#enrichBtn');
+    if(eb) eb.onclick=async()=>{
+      const n=parseInt(($('#enrichN')||{}).value,10)||10, msg=$('#enrichMsg');
+      const before=DATA.projects.filter(p=>!p.processed).length;
+      eb.disabled=true; msg.style.color='';
+      msg.textContent='работаю… примерно '+Math.ceil(n*30/60)+' мин, не закрывай вкладку';
+      try{
+        await window.VC.enrichCall(n);
+        DATA=await window.VC.loadData();
+        const after=DATA.projects.filter(p=>!p.processed).length;
+        render();
+        const em=$('#enrichMsg');
+        if(em){ em.textContent='готово: обогащено '+(before-after)+' лидов'; em.style.color='var(--green)'; }
+      }catch(e){ msg.textContent='не вышло: '+(e.message||e); msg.style.color='var(--red)'; eb.disabled=false; }
+    };
     const drop=$('#drop'), inp=$('#fileIn'); if(!drop) return;
     $('#pickBtn').onclick=()=>inp.click();
     inp.onchange=()=>{ if(inp.files[0]) handleFile(inp.files[0]); };
@@ -1028,8 +1101,9 @@
         ${calls.length?`<div class="dr-sec">История звонков</div>
           <ul class="feed">${calls.slice().reverse().slice(0,8).map(c=>`
             <li><div class="fi">${(OUTCOMES[c.out]||{ic:'📞'}).ic}</div>
-              <div><div>${esc((OUTCOMES[c.out]||{label:'набрали, итог не отмечен'}).label)}</div>
-              <div class="ft">${esc(c.by||'')} · ${esc(ago(c.at))}</div></div></li>`).join('')}</ul>`:''}
+              <div style="flex:1"><div>${esc((OUTCOMES[c.out]||{label:'набрали, итог не отмечен'}).label)}</div>
+              <div class="ft">${esc(c.by||'')} · ${esc(ago(c.at))}</div></div>
+              ${canEdit?`<button class="mini del" data-drdel="${esc(c.at)}" title="убрать запись">✕</button>`:''}</li>`).join('')}</ul>`:''}
 
         <div class="dr-actions">
           ${p.site?`<a class="btn" href="${esc(p.site)}" target="_blank" rel="noopener">Сайт ↗</a>`:''}
@@ -1061,6 +1135,10 @@
     const db_=$('#demoBtn'); if(db_) db_.onclick=()=>openDemoModal(p);
     const ar=$('#aiReviewBtn');
     if(ar) ar.onclick=()=>{ TR.leadId=p.id; TR.tab='review'; closeDrawer(); go('trainer'); };
+    $$('#drawer button[data-drdel]').forEach(b=>b.onclick=async()=>{
+      try{ if(await deleteCall(p.id, b.dataset.drdel)){ openProject(p.id); render(); } }
+      catch(err){ alert('Не удалилось: '+(err.message||err)); }
+    });
     const nb=$('#notesSave');
     if(nb) nb.onclick=async()=>{
       const msg=$('#notesMsg'); msg.textContent='сохраняю…'; msg.style.color='';
@@ -1073,6 +1151,14 @@
     };
   }
   function closeDrawer(){ $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden','true'); $('#drawerScrim').classList.remove('open'); }
+
+  async function deleteCall(id, at){
+    const p=DATA.projects.find(x=>String(x.id)===String(id)); if(!p) return false;
+    if(!confirm('Убрать эту запись из журнала звонков?')) return false;
+    const calls=window.VC.callsOf(p).filter(c=>c.at!==at);
+    await window.VC.saveRaw(p,{calls:calls});
+    return true;
+  }
 
   /* Перекрашиваем строку под новую стадию вручную — иначе полная перерисовка
      таблицы уводит фокус и прокрутку. */
@@ -1179,7 +1265,15 @@
     if(view==='import') wireImport();
     if(view==='shield') wireShield();
     if(view==='trainer') wireTrainer();
+    if(view==='team') renderTeam();
     const nx=$('#nextCallBtn'); if(nx) nx.onclick=nextLead;
+    /* удаление записи из журнала звонков */
+    $$('button[data-delcall]').forEach(b=>b.onclick=async e=>{
+      e.stopPropagation();
+      const [id,at]=b.dataset.delcall.split('::');
+      try{ if(await deleteCall(id,at)) render(); }
+      catch(err){ alert('Не удалилось: '+(err.message||err)); }
+    });
 
     const ib=$('#inviteBtn');
     if(ib){
