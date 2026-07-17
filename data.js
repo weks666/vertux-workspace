@@ -11,6 +11,11 @@ const CONFIG = {
   // edge-функции widget-bridge (см. backend/README.md).
   bridgeUrl: '',
 
+  // AI-тренер звонков: вебхук воркфлоу «Vertux AI Trainer» в n8n
+  // (backend/n8n_vertux_ai_trainer.json — импортировать, выбрать кредензию OpenRouter).
+  // Пусто → live-транскрипция работает, подсказки/разбор/тренажёр пишут «не подключено».
+  aiUrl: '',
+
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
 };
@@ -253,6 +258,25 @@ async function runImport(plan, mode, onProgress){
   return report;
 }
 
+/* ---------- AI-тренер (через вебхук n8n, ключ OpenRouter живёт там) ---------- */
+async function aiCall(mode, payload){
+  const url=CONFIG.aiUrl;
+  if(!url) throw new Error('ai_not_configured');
+  let token='';
+  try{
+    const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
+    if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
+  }catch(e){}
+  const res=await fetch(url,{
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+    body:JSON.stringify({ mode:mode, ...(payload||{}) }),
+  });
+  const j=await res.json().catch(()=>({}));
+  if(!res.ok||j.error) throw new Error(j.error||('HTTP '+res.status));
+  return j; /* {text:'…'} */
+}
+
 async function loadData(){
   const projects=await loadProjects();
   return { projects:projects||[], widgets:WIDGETS, _source:projects?'db':'offline' };
@@ -261,7 +285,7 @@ async function loadData(){
 window.VC = {
   CONFIG, loadData, loadProjects,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw,
-  logCall, callsOf,
+  logCall, callsOf, aiCall,
   readFileRows, detectFormat, mapRows, planImport, runImport,
   FORMATS,
 };

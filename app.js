@@ -23,6 +23,7 @@
     team:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20a6 6 0 0 1 12 0M14 20a6 6 0 0 1 8-5',
     shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z M9 12l2 2 4-4',
     money:'M12 3v18M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7',
+    trainer:'M4 14a8 8 0 0 1 16 0M4 14v3a2 2 0 0 0 2 2h1v-6H4m16 0h-3v6h1a2 2 0 0 0 2-2v-4M14 21h-2',
   };
   const svg=p=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${p}"/></svg>`;
 
@@ -30,6 +31,7 @@
     {id:'dashboard',label:'Дашборд'},
     {id:'projects', label:'Проекты'},
     {id:'calls',    label:'Звонки'},
+    {id:'trainer',  label:'Тренер'},
     {id:'money',    label:'Деньги', finance:true},
     {id:'import',   label:'Импорт'},
     {id:'team',     label:'Команда'},
@@ -39,6 +41,7 @@
     dashboard:'что происходит в агентстве',
     projects:'база лидов — стадии, заметки, демки',
     calls:'журнал звонков, выработка и аналитика',
+    trainer:'live-суфлёр, разбор звонков, тренажёр',
     money:'выручка, доли команды, прогноз',
     import:'залить CSV/XLSX из парсера или Рокфеллера',
     team:'доступы и приглашения',
@@ -155,6 +158,10 @@
       ${kpi('Звонков сегодня',today,ICONS.calls,calls.length?'всего '+calls.length:'журнал пуст')}
       ${kpi('Демок сделано',demos,ICONS.import,inWork+' лидов в воронке')}
       ${kpi('Оплачено',paid,ICONS.money,'конверсия '+conv+'%',paid?'up':'')}
+    </div>
+    <div class="row-inline" style="margin-bottom:16px">
+      <button class="btn gold" id="nextCallBtn">▶ Следующий звонок</button>
+      <span class="mut" style="font-size:12.5px">сам выберу, кому звонить: сначала просроченные напоминания, потом свежие со скриптом</span>
     </div>
     ${due.length?`<div class="panel due-panel" style="margin-bottom:16px">
       <div class="panel-h"><h3>🔔 Пора перезвонить</h3><span class="sub">${plural(due.length,'лид ждёт','лида ждут','лидов ждут')} звонка</span></div>
@@ -501,6 +508,240 @@
     });
   }
 
+  /* ---------- AI-тренер ---------- */
+  const TR={ tab:'live', leadId:'', lines:[], hints:[], auto:true, listening:false,
+             chat:[], difficulty:'занятой', tts:true, review:'', lastHintLine:0, lastHintAt:0, busy:false };
+  let SREC=null;
+
+  const aiOn=()=>!!window.VC.CONFIG.aiUrl;
+  const sttOn=()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition);
+  const trLead=()=>DATA.projects.find(x=>String(x.id)===String(TR.leadId))||null;
+  const leadCtx=p=>p?{ niche:String(p.niche||'').slice(0,80), city:p.city||'', issues:String(p.issues||'').slice(0,600),
+                       script:String(p.call_script||'').slice(0,4000) }:{ niche:'', city:'', issues:'', script:'' };
+
+  function speak(t){
+    if(!TR.tts) return;
+    try{ const u=new SpeechSynthesisUtterance(t); u.lang='ru-RU'; u.rate=1.05; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+  }
+
+  function leadSelect(id){
+    const opts=DATA.projects
+      .filter(p=>p.call_script||p.issues||p.phone)
+      .slice(0,200)
+      .map(p=>`<option value="${esc(p.id)}"${String(p.id)===String(TR.leadId)?' selected':''}>${esc(p.company)}${p.call_script?' · скрипт':''}</option>`).join('');
+    return `<select id="${id}" class="tr-lead"><option value="">— без привязки к лиду —</option>${opts}</select>`;
+  }
+
+  V.trainer=()=>{
+    const tabs=[['live','🎙 Live-суфлёр'],['review','🧾 Разбор звонка'],['roleplay','🥊 Тренажёр']];
+    const head=`
+      <div class="tbl-tools">
+        ${tabs.map(([k,l])=>`<button class="chip ${TR.tab===k?'active':''}" data-ttab="${k}">${l}</button>`).join('')}
+      </div>
+      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>Мозг тренера не подключён.</b> Live-транскрипция работает и так, а подсказки, разбор и тренажёр заработают после импорта воркфлоу <code>backend/n8n_vertux_ai_trainer.json</code> в n8n (2 минуты: импорт → выбрать кредензию OpenRouter → Activate → вебхук-адрес вписать в <code>data.js → aiUrl</code>).</div></div>`}`;
+
+    if(TR.tab==='live') return head+`
+      ${sttOn()?'':'<div class="hint"><span>⚠️</span><div>Этот браузер не умеет распознавать речь — нужен Chrome или Edge.</div></div>'}
+      <div class="row-inline" style="margin-bottom:14px">
+        ${leadSelect('trLeadSel')}
+        <button class="btn ${TR.listening?'':'gold'}" id="trMic" ${sttOn()?'':'disabled'}>${TR.listening?'⏹ Стоп':'🎙 Начать слушать'}</button>
+        <label class="mut" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="trAuto" ${TR.auto?'checked':''}/> подсказки сами</label>
+        <button class="btn" id="trHintBtn" ${aiOn()?'':'disabled'}>Подсказку!</button>
+        ${TR.lines.length?`<button class="btn" id="trToReview">→ Разобрать этот звонок</button>`:''}
+      </div>
+      <div class="cols">
+        <div class="panel"><div class="panel-h"><h3>Что слышу</h3><span class="sub" id="trState">${TR.listening?'слушаю…':'микрофон выключен'}</span></div>
+          <div class="panel-b transcript" id="trTranscript">${TR.lines.map(l=>`<div class="tline">${esc(l)}</div>`).join('')}
+            <div class="tline tint" id="trInterim"></div>
+            ${TR.lines.length?'':'<div class="empty" id="trEmpty"><div class="e-ic">🎙</div><div>Нажми «Начать слушать», положи телефон на громкую — и говори. Я записываю обе стороны с микрофона.</div></div>'}</div></div>
+        <div class="panel"><div class="panel-h"><h3>Суфлёр</h3><span class="sub">что ответить</span></div>
+          <div class="panel-b" id="trHints">${TR.hints.length?TR.hints.map(h=>`<div class="hint-card">${esc(h)}</div>`).join('')
+            :'<div class="empty"><div class="e-ic">💡</div><div>Подсказки появятся по ходу разговора</div></div>'}</div></div>
+      </div>`;
+
+    if(TR.tab==='review'){
+      const p=trLead();
+      const reviews=(p&&p.raw&&Array.isArray(p.raw.reviews))?p.raw.reviews:[];
+      return head+`
+      <div class="row-inline" style="margin-bottom:14px">${leadSelect('trLeadSel')}
+        <span class="mut" style="font-size:12.5px">лид добавит в разбор скрипт и болячки сайта</span></div>
+      <div class="cols">
+        <div class="panel"><div class="panel-h"><h3>Транскрипт звонка</h3><span class="sub">из Fireflies или live-режима</span></div>
+          <div class="panel-b">
+            <textarea id="trText" rows="12" placeholder="Вставь сюда текст разговора…">${esc(TR.review)}</textarea>
+            <div class="row-inline" style="margin-top:10px">
+              <button class="btn gold" id="trReviewBtn" ${aiOn()?'':'disabled'}>Разобрать</button>
+              <span class="mut" id="trReviewMsg" style="font-size:12.5px"></span>
+            </div></div></div>
+        <div class="panel"><div class="panel-h"><h3>Разбор</h3></div>
+          <div class="panel-b" id="trResult"><div class="empty"><div class="e-ic">🧾</div><div>Вставь транскрипт и нажми «Разобрать»</div></div></div></div>
+      </div>
+      ${reviews.length?`<div class="panel" style="margin-top:16px"><div class="panel-h"><h3>Прошлые разборы: ${esc(p.company)}</h3><span class="sub">видно, растёт ли качество</span></div>
+        <div class="panel-b">${reviews.slice().reverse().map(r=>`<details class="rev"><summary>${esc(fmtDay(r.at))} · ${esc(String(r.text||'').split('\n')[0].slice(0,70))}</summary><pre class="script" style="margin-top:8px">${esc(r.text)}</pre></details>`).join('')}</div></div>`:''}`;
+    }
+
+    /* тренажёр */
+    return head+`
+    <div class="row-inline" style="margin-bottom:14px">
+      ${leadSelect('trLeadSel')}
+      <select id="trDiff">${['лояльный','занятой','жёсткий'].map(d=>`<option${d===TR.difficulty?' selected':''}>${d}</option>`).join('')}</select>
+      <label class="mut" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="trTts" ${TR.tts?'checked':''}/> озвучивать клиента</label>
+      ${TR.chat.length?`<button class="btn" id="trDebrief" ${aiOn()?'':'disabled'}>Завершить и получить разбор</button>
+        <button class="btn" id="trReset">Заново</button>`:''}
+    </div>
+    <div class="panel"><div class="panel-h"><h3>Тренировочный звонок</h3>
+      <span class="sub">${trLead()?esc(trLead().company)+' · ':''}клиент: ${esc(TR.difficulty)}</span></div>
+      <div class="panel-b">
+        <div class="chat" id="trChat">${TR.chat.length?TR.chat.map(m=>`<div class="msg ${m.who}">${esc(m.text)}</div>`).join('')
+          :'<div class="empty"><div class="e-ic">🥊</div><div>Поздоровайся — как в настоящем звонке. ИИ сыграет клиента из выбранной ниши, а в конце разберёт, как ты отработал.</div></div>'}</div>
+        <div class="row-inline" style="margin-top:12px">
+          <input id="trMsg" placeholder="твоя реплика…" style="flex:1" ${aiOn()?'':'disabled'} />
+          ${sttOn()?`<button class="btn" id="trSay" title="сказать голосом" ${aiOn()?'':'disabled'}>🎙</button>`:''}
+          <button class="btn gold" id="trSend" ${aiOn()?'':'disabled'}>Сказать</button>
+        </div></div></div>`;
+  };
+
+  function trAppendLine(text){
+    TR.lines.push(text);
+    const box=$('#trTranscript');
+    if(box){
+      const e=$('#trEmpty'); if(e) e.remove();
+      const d=document.createElement('div'); d.className='tline'; d.textContent=text;
+      box.insertBefore(d, $('#trInterim'));
+      box.scrollTop=box.scrollHeight;
+    }
+    if(TR.auto && aiOn() && TR.lines.length-TR.lastHintLine>=2 && Date.now()-TR.lastHintAt>9000) trHint();
+  }
+
+  async function trHint(){
+    if(TR.busy||!aiOn()||!TR.lines.length) return;
+    TR.busy=true; TR.lastHintLine=TR.lines.length; TR.lastHintAt=Date.now();
+    const hb=$('#trHintBtn'); if(hb){ hb.disabled=true; hb.textContent='думаю…'; }
+    try{
+      const ctx=leadCtx(trLead());
+      const j=await window.VC.aiCall('suffler',{ transcript:TR.lines.slice(-14).join('\n'), ...ctx });
+      TR.hints.unshift(j.text||'—'); TR.hints=TR.hints.slice(0,6);
+      const hv=$('#trHints'); if(hv) hv.innerHTML=TR.hints.map(h=>`<div class="hint-card">${esc(h)}</div>`).join('');
+    }catch(e){
+      const hv=$('#trHints'); if(hv) hv.innerHTML=`<div class="hint-card bad">суфлёр молчит: ${esc(e.message||e)}</div>`+hv.innerHTML;
+    }finally{
+      TR.busy=false;
+      const hb2=$('#trHintBtn'); if(hb2){ hb2.disabled=!aiOn(); hb2.textContent='Подсказку!'; }
+    }
+  }
+
+  function trStartSTT(){
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR) return;
+    SREC=new SR();
+    SREC.lang='ru-RU'; SREC.continuous=true; SREC.interimResults=true;
+    SREC.onresult=e=>{
+      let interim='';
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const r=e.results[i];
+        if(r.isFinal){ const t=r[0].transcript.trim(); if(t) trAppendLine(t); }
+        else interim+=r[0].transcript;
+      }
+      const iv=$('#trInterim'); if(iv) iv.textContent=interim;
+    };
+    /* Chrome сам останавливается на тишине — перезапускаем, пока не нажали Стоп */
+    SREC.onend=()=>{ if(TR.listening){ try{ SREC.start(); }catch(e){} } };
+    SREC.onerror=ev=>{
+      if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){
+        TR.listening=false;
+        const st=$('#trState'); if(st) st.textContent='нет доступа к микрофону — разреши в браузере';
+        const mb=$('#trMic'); if(mb){ mb.textContent='🎙 Начать слушать'; mb.classList.add('gold'); }
+      }
+    };
+    try{ SREC.start(); }catch(e){}
+  }
+  function trStopSTT(){ if(SREC){ try{ SREC.stop(); }catch(e){} SREC=null; } }
+
+  async function trRoleSend(text){
+    text=String(text||'').trim();
+    if(!text||TR.busy||!aiOn()) return;
+    TR.busy=true;
+    TR.chat.push({who:'m',text:text});
+    render();
+    try{
+      const ctx=leadCtx(trLead());
+      const j=await window.VC.aiCall('roleplay',{ history:TR.chat.slice(-14), difficulty:TR.difficulty, ...ctx });
+      TR.chat.push({who:'c',text:j.text||'…'});
+      speak(j.text||'');
+    }catch(e){ TR.chat.push({who:'sys',text:'клиент завис: '+(e.message||e)}); }
+    finally{ TR.busy=false; render(); const i=$('#trMsg'); if(i) i.focus(); }
+  }
+
+  function wireTrainer(){
+    $$('[data-ttab]').forEach(b=>b.onclick=()=>{
+      if(TR.tab==='live'&&TR.listening){ TR.listening=false; trStopSTT(); }
+      TR.tab=b.dataset.ttab; render();
+    });
+    const ls=$('#trLeadSel'); if(ls) ls.onchange=()=>{ TR.leadId=ls.value; render(); };
+    const mic=$('#trMic');
+    if(mic) mic.onclick=()=>{
+      TR.listening=!TR.listening;
+      if(TR.listening) trStartSTT(); else trStopSTT();
+      render();
+    };
+    const au=$('#trAuto'); if(au) au.onchange=()=>{ TR.auto=au.checked; };
+    const hb=$('#trHintBtn'); if(hb) hb.onclick=trHint;
+    const t2r=$('#trToReview'); if(t2r) t2r.onclick=()=>{
+      if(TR.listening){ TR.listening=false; trStopSTT(); }
+      TR.review=TR.lines.join('\n'); TR.tab='review'; render();
+    };
+    const rb=$('#trReviewBtn');
+    if(rb) rb.onclick=async()=>{
+      const txt=$('#trText').value.trim(), msg=$('#trReviewMsg'), out=$('#trResult');
+      if(txt.length<40){ msg.textContent='слишком коротко — вставь весь разговор'; return; }
+      TR.review=txt;
+      rb.disabled=true; msg.textContent='разбираю…';
+      try{
+        const p=trLead();
+        const j=await window.VC.aiCall('review',{ transcript:txt.slice(0,12000), ...leadCtx(p) });
+        out.innerHTML=`<pre class="script" style="max-height:none">${esc(j.text||'—')}</pre>`;
+        msg.textContent='';
+        if(p){
+          const raw=(p.raw&&typeof p.raw==='object')?p.raw:{};
+          const reviews=(Array.isArray(raw.reviews)?raw.reviews:[]).slice(-9);
+          reviews.push({at:new Date().toISOString(),text:j.text||''});
+          await window.VC.saveRaw(p,{reviews:reviews});
+          msg.textContent='сохранено в карточку лида';
+        }
+      }catch(e){ msg.textContent='не вышло: '+(e.message||e); }
+      finally{ rb.disabled=!aiOn(); }
+    };
+    const diff=$('#trDiff'); if(diff) diff.onchange=()=>{ TR.difficulty=diff.value; render(); };
+    const tts=$('#trTts'); if(tts) tts.onchange=()=>{ TR.tts=tts.checked; };
+    const send=$('#trSend'), msgIn=$('#trMsg');
+    if(send) send.onclick=()=>{ trRoleSend(msgIn.value); if(msgIn) msgIn.value=''; };
+    if(msgIn) msgIn.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); trRoleSend(msgIn.value); msgIn.value=''; } };
+    const say=$('#trSay');
+    if(say) say.onclick=()=>{
+      const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR) return;
+      const r=new SR(); r.lang='ru-RU'; r.interimResults=false;
+      say.textContent='…говори'; say.disabled=true;
+      r.onresult=e=>{ const t=e.results[0][0].transcript; trRoleSend(t); };
+      r.onend=()=>{ say.textContent='🎙'; say.disabled=false; };
+      r.onerror=()=>{ say.textContent='🎙'; say.disabled=false; };
+      try{ r.start(); }catch(e){ say.textContent='🎙'; say.disabled=false; }
+    };
+    const db2=$('#trDebrief');
+    if(db2) db2.onclick=async()=>{
+      if(TR.busy||TR.chat.length<2) return;
+      TR.busy=true; db2.disabled=true; db2.textContent='разбираю…';
+      try{
+        const j=await window.VC.aiCall('debrief',{ history:TR.chat.slice(-30), difficulty:TR.difficulty, ...leadCtx(trLead()) });
+        TR.chat.push({who:'coach',text:j.text||'—'});
+      }catch(e){ TR.chat.push({who:'sys',text:'разбор не вышел: '+(e.message||e)}); }
+      finally{ TR.busy=false; render(); }
+    };
+    const rst=$('#trReset'); if(rst) rst.onclick=()=>{ TR.chat=[]; render(); };
+    const chat=$('#trChat'); if(chat) chat.scrollTop=chat.scrollHeight;
+  }
+
   /* ---------- Импорт ---------- */
   let IMP=null; /* {rows, fmt, plan, file} */
   V.import=()=>{
@@ -794,6 +1035,7 @@
           ${p.site?`<a class="btn" href="${esc(p.site)}" target="_blank" rel="noopener">Сайт ↗</a>`:''}
           ${p.demo?`<a class="btn" href="${esc(p.demo)}" target="_blank" rel="noopener">Демо ↗</a>`:''}
           ${canEdit&&p.gen_prompt?`<button class="btn gold" id="demoBtn">${p.demo?'Заменить демку':'Сделать демку'}</button>`:''}
+          ${canEdit?`<button class="btn" id="aiReviewBtn">🧾 ИИ-разбор звонка</button>`:''}
         </div>
       </div>`;
     $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
@@ -817,6 +1059,8 @@
     if(ncd) ncd.onchange=()=>{ if(!ncd.value) return; const d=new Date(ncd.value+'T10:00:00'); setNc(d.toISOString()); };
     const ncc=$('#ncClear'); if(ncc) ncc.onclick=()=>setNc(null);
     const db_=$('#demoBtn'); if(db_) db_.onclick=()=>openDemoModal(p);
+    const ar=$('#aiReviewBtn');
+    if(ar) ar.onclick=()=>{ TR.leadId=p.id; TR.tab='review'; closeDrawer(); go('trainer'); };
     const nb=$('#notesSave');
     if(nb) nb.onclick=async()=>{
       const msg=$('#notesMsg'); msg.textContent='сохраняю…'; msg.style.color='';
@@ -934,6 +1178,8 @@
 
     if(view==='import') wireImport();
     if(view==='shield') wireShield();
+    if(view==='trainer') wireTrainer();
+    const nx=$('#nextCallBtn'); if(nx) nx.onclick=nextLead;
 
     const ib=$('#inviteBtn');
     if(ib){
@@ -951,6 +1197,19 @@
     }
   }
   function go(id){ view=id; if(view!=='projects') q=''; render(); }
+
+  /* Режим обзвона: кому звонить прямо сейчас. Приоритет:
+     просроченные напоминания → новые со скриптом (рейтинг выше — раньше) → новые → «связались». */
+  function nextLead(){
+    const P=DATA.projects.filter(p=>p.phone);
+    const cand=
+      P.filter(isDue).sort((a,b)=>String(nextCallOf(a)).localeCompare(String(nextCallOf(b))))[0]
+      ||P.filter(p=>stageOf(p)==='new'&&p.processed).sort((a,b)=>(Number(b.rating)||0)-(Number(a.rating)||0))[0]
+      ||P.filter(p=>stageOf(p)==='new')[0]
+      ||P.filter(p=>stageOf(p)==='contacted')[0];
+    if(cand) openProject(cand.id);
+    else alert('Некому звонить: ни напоминаний, ни новых лидов с телефоном.');
+  }
 
   function renderNav(){
     const raw=DATA.projects.filter(p=>stageOf(p)==='new').length;

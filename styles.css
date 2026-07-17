@@ -253,6 +253,25 @@ table.leads th.c-ra{cursor:help;text-decoration:underline dotted;text-underline-
 .note-in.amt{max-width:120px}
 .note-in.pct{max-width:64px}
 
+/* ---------- AI-тренер ---------- */
+.transcript{min-height:280px;max-height:440px;overflow-y:auto;font-size:13.5px;line-height:1.7}
+.tline{padding:4px 0;border-bottom:1px dashed var(--line)}
+.tline.tint{color:var(--muted-2);font-style:italic;border-bottom:none}
+.hint-card{background:rgba(124,92,255,.08);border-left:3px solid var(--gold);border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  padding:10px 12px;font-size:13px;line-height:1.6;margin-bottom:8px;white-space:pre-wrap}
+.hint-card.bad{border-left-color:var(--red);background:rgba(255,95,87,.07)}
+.tr-lead{max-width:260px}
+.chat{display:flex;flex-direction:column;gap:8px;min-height:220px;max-height:420px;overflow-y:auto;padding:4px}
+.msg{max-width:78%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap}
+.msg.m{align-self:flex-end;background:linear-gradient(135deg,var(--gold),#5a3fd6);color:#fff;border-bottom-right-radius:4px}
+.msg.c{align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);border-bottom-left-radius:4px}
+.msg.coach{align-self:stretch;max-width:none;background:rgba(40,200,64,.07);border:1px dashed rgba(40,200,64,.4)}
+.msg.sys{align-self:center;background:none;color:var(--red);font-size:12px}
+.rev summary{cursor:pointer;font-size:13px;padding:7px 0;color:var(--muted)}
+.rev summary:hover{color:var(--text)}
+#trMsg{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius-sm);height:38px;padding:0 12px;color:var(--text);font-family:inherit;font-size:13px;outline:none}
+#trMsg:focus{border-color:var(--gold)}
+
 /* ---------- Импорт ---------- */
 .drop{border:2px dashed var(--line-2);border-radius:var(--radius);padding:44px 20px;text-align:center;
   background:var(--panel);transition:.15s}
