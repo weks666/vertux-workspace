@@ -943,14 +943,14 @@
   }
 
   /* ---------- звонки ---------- */
+  const PENDING_CALL=new Map();
   async function doCall(p){
-    if(p.phone) window.location.href='tel:'+String(p.phone).replace(/[^\d+]/g,'');
+    if(!p.phone) return;
+    PENDING_CALL.set(String(p.id),{
+      at:new Date().toISOString(), by:(USER&&(USER.name||USER.email))||'—'
+    });
     openProject(p.id);
-    try{
-      await window.VC.logCall(p,{ at:new Date().toISOString(), by:(USER&&(USER.name||USER.email))||'—', out:null });
-      const box=$('#outcomeBox'); if(box) box.classList.add('live');
-      renderCallsBadge(p);
-    }catch(e){ console.warn('звонок не записался',e); }
+    window.location.href='tel:'+String(p.phone).replace(/[^\d+]/g,'');
   }
   function renderCallsBadge(p){
     const tr=document.querySelector(`tr[data-id="${p.id}"] .co`); if(!tr) return;
@@ -960,13 +960,25 @@
     if(b){ b.textContent=n; b.title='звонков: '+n; }
   }
   async function setOutcome(p, key){
+    const pending=PENDING_CALL.get(String(p.id));
     const last=lastCall(p);
     const msg=$('#outMsg');
-    if(!last){ if(msg) msg.textContent='сначала нажми «Набрать»'; return; }
-    const prev=last.out;
-    last.out=key;
+    if(!pending&&!last){ if(msg) msg.textContent='сначала нажми «Набрать»'; return; }
+    const prev=last&&last.out;
     try{
-      await window.VC.savePatch(p.id,{ raw:p.raw });
+      if(pending){
+        await window.VC.logCall(p,{...pending,out:key});
+        PENDING_CALL.delete(String(p.id));
+      }else{
+        last.out=key;
+        await window.VC.savePatch(p.id,{ raw:p.raw });
+      }
+    }catch(e){
+      if(last&&!pending) last.out=prev;
+      if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
+      return;
+    }
+    try{
       const target=OUTCOMES[key].stage;
       if(target){
         const now=FUNNEL.indexOf(stageOf(p)), next=FUNNEL.indexOf(target);
@@ -977,11 +989,9 @@
           paintStage(p);
         }
       }
-      openProject(p.id);
-    }catch(e){
-      last.out=prev;
-      if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
-    }
+    }catch(e){ console.warn('итог звонка сохранён, стадия не обновилась',e); }
+    renderCallsBadge(p);
+    openProject(p.id);
   }
 
   /* ---------- демки ---------- */
@@ -1043,6 +1053,7 @@
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     const calls=window.VC.callsOf(p);
     const last=lastCall(p);
+    const pending=PENDING_CALL.get(String(p.id));
     $('#drawer').innerHTML=`
       <div class="dr-head"><button class="dr-close" onclick="VCUI.closeDrawer()">✕</button>
         <div class="co"><div class="logo ${STAGES[stageOf(p)].cls}" style="width:40px;height:40px">${initials(p.company)}</div>
@@ -1063,11 +1074,11 @@
 
         ${canEdit&&p.phone?`<div class="dr-sec">Звонок</div>
           <div class="row-inline"><button class="btn gold" id="callBtn">📞 Набрать ${esc(p.phone)}</button></div>
-          <div id="outcomeBox" class="outcomes${last?' live':''}">
+          <div id="outcomeBox" class="outcomes${(pending||last)?' live':''}">
             <div class="mut" style="font-size:12px;margin:10px 0 8px">Чем закончился звонок?</div>
             <div class="out-row">${Object.entries(OUTCOMES).map(([k,v])=>
-              `<button class="out ${last&&last.out===k?'on':''}" data-out="${k}">${v.ic} ${v.label}</button>`).join('')}</div>
-            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${last?'последний: '+esc(ago(last.at)):''}</div>
+              `<button class="out ${!pending&&last&&last.out===k?'on':''}" data-out="${k}">${v.ic} ${v.label}</button>`).join('')}</div>
+            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${pending?'номер передан Windows · запись появится после выбора итога':last?'последний: '+esc(ago(last.at)):''}</div>
           </div>`:''}
 
         ${canEdit?`<div class="dr-sec">Перезвонить</div>
