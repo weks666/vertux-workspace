@@ -812,20 +812,13 @@
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     if(!canEdit) return `<div class="hint"><span>🔒</span><div>Импортировать данные может основатель, администратор или менеджер.</div></div>`;
     const rawN=DATA.projects.filter(p=>!p.processed).length;
-    const enrichOn=window.VC.CONFIG.enrichActive===true;
     return `
     <div class="hint"><span>📥</span><div>Кидай сюда <b>CSV</b> или <b>XLSX</b> — из 2GIS-парсера (сырьё) или из Рокфеллера (готовый список со скриптами). Формат определится сам, а перед записью покажу, что изменится.</div></div>
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-h"><h3>🪄 ИИ-Рокфеллер</h3><span class="sub">${plural(rawN,'сырой лид','сырых лида','сырых лидов')} в базе</span></div>
+      <div class="panel-h"><h3>🧭 Автоматизация Rockefeller</h3><span class="sub">${plural(rawN,'сырой лид','сырых лида','сырых лидов')} в базе</span></div>
       <div class="panel-b">
-        <div class="row-inline">
-          <span class="mut" style="font-size:13px">Обогатить</span>
-          <select id="enrichN"><option>5</option><option selected>10</option><option>15</option></select>
-          <span class="mut" style="font-size:13px">лидов</span>
-          <button class="btn gold" id="enrichBtn" ${(rawN&&enrichOn)?'':'disabled'}>Прогнать через ИИ</button>
-          <span id="enrichMsg" class="mut" style="font-size:12.5px"></span>
-        </div>
-        <div class="mut" style="font-size:12px;margin-top:8px">${enrichOn?'Берёт самых рейтинговых из сырых, заглядывает на их сайты и пишет: тип (редизайн/с нуля), болячки, контекст, скрипт звонка и промпт демки. Примерно 20–40 секунд на лида.':'Модуль готов, но webhook n8n ещё не активирован. Импортируй <code>n8n/vertux-rockfeller.json</code>, выбери OpenRouter и Postgres, затем Activate.'}</div>
+        <div class="hint" style="margin:0"><span>🖥️</span><div><b>Основной путь сохраняет качество Rockefeller:</b> парсер → Rockefeller → готовый файл → проверка → импорт сюда. Локальный браузерный мост сможет пройти эти шаги в отдельном профиле Windows; n8n не подменяет Rockefeller собственной генерацией.</div></div>
+        <div class="mut" style="font-size:12px;margin-top:10px">Статус: проектируется безопасный мост. Пока просто выгрузи готовый файл Rockefeller и перетащи его в область ниже — этот сценарий уже работает.</div>
       </div>
     </div>
     <div class="drop" id="drop">
@@ -934,21 +927,6 @@
   }
 
   function wireImport(){
-    const eb=$('#enrichBtn');
-    if(eb) eb.onclick=async()=>{
-      const n=parseInt(($('#enrichN')||{}).value,10)||10, msg=$('#enrichMsg');
-      const before=DATA.projects.filter(p=>!p.processed).length;
-      eb.disabled=true; msg.style.color='';
-      msg.textContent='работаю… примерно '+Math.ceil(n*30/60)+' мин, не закрывай вкладку';
-      try{
-        await window.VC.enrichCall(n);
-        DATA=await window.VC.loadData();
-        const after=DATA.projects.filter(p=>!p.processed).length;
-        render();
-        const em=$('#enrichMsg');
-        if(em){ em.textContent='готово: обогащено '+(before-after)+' лидов'; em.style.color='var(--green)'; }
-      }catch(e){ msg.textContent='не вышло: '+(e.message||e); msg.style.color='var(--red)'; eb.disabled=false; }
-    };
     const drop=$('#drop'), inp=$('#fileIn'); if(!drop) return;
     $('#pickBtn').onclick=()=>inp.click();
     inp.onchange=()=>{ if(inp.files[0]) handleFile(inp.files[0]); };

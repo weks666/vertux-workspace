@@ -11,11 +11,11 @@ const CONFIG = {
   // edge-функции widget-bridge (см. backend/README.md).
   bridgeUrl: '',
 
-  // Вебхуки n8n (воркфлоу лежат в папке n8n/ репозитория — Import from URL, выбрать
-  // кредензию, Activate). Пока воркфлоу не активирован, кнопки честно скажут об этом.
+  // n8n остаётся мостом для AI-тренера и управления командой.
+  // Rockefeller не заменяем собственной n8n-цепочкой: готовый файл импортируется ниже,
+  // а автоматизация будет выполняться локальным браузерным мостом с отдельным профилем.
   aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
   adminUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-admin',
-  enrichUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-rockfeller',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
@@ -279,7 +279,6 @@ async function hookCall(url, payload){
 }
 const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
 const adminCall=(action,payload)=>hookCall(CONFIG.adminUrl,{ action:action, ...(payload||{}) });
-const enrichCall=(limit)=>hookCall(CONFIG.enrichUrl,{ limit:limit });
 
 /* 404 у n8n означает, что production webhook не зарегистрирован. Остальные ответы
  * (включая 400 без токена) означают: воркфлоу активен и дошёл до своих ворот. */
@@ -294,19 +293,18 @@ async function hookActive(url){
 }
 
 async function loadData(){
-  const [projects,aiActive,adminActive,enrichActive]=await Promise.all([
-    loadProjects(), hookActive(CONFIG.aiUrl), hookActive(CONFIG.adminUrl), hookActive(CONFIG.enrichUrl),
+  const [projects,aiActive,adminActive]=await Promise.all([
+    loadProjects(), hookActive(CONFIG.aiUrl), hookActive(CONFIG.adminUrl),
   ]);
   CONFIG.aiActive=aiActive;
   CONFIG.adminActive=adminActive;
-  CONFIG.enrichActive=enrichActive;
   return { projects:projects||[], widgets:WIDGETS, _source:projects?'db':'offline' };
 }
 
 window.VC = {
   CONFIG, loadData, loadProjects,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw,
-  logCall, callsOf, aiCall, adminCall, enrichCall,
+  logCall, callsOf, aiCall, adminCall,
   readFileRows, detectFormat, mapRows, planImport, runImport,
   FORMATS,
 };
