@@ -198,10 +198,11 @@
   };
 
   V.projects=()=>{
-    const chips=[['all','Все'],['work','В работе'],['callback','🔔 Перезвонить'],['redesign','Редизайн'],['creation','С нуля'],
+    const chips=[['all','Все'],['new','Новые'],['work','В работе'],['callback','🔔 Перезвонить'],['redesign','Редизайн'],['creation','С нуля'],
                  ['processed','Со скриптом'],['raw','Сырые'],['demo','С демкой'],['hot','Рейтинг 4.5+']];
     let list=DATA.projects.filter(p=>{
       if(pFilter==='all') return true;
+      if(pFilter==='new') return stageOf(p)==='new';
       if(pFilter==='work') return ['contacted','demo_sent','agreed'].includes(stageOf(p));
       if(pFilter==='callback') return !!nextCallOf(p);
       if(pFilter==='processed') return !!p.processed;
@@ -247,8 +248,8 @@
         <td class="c-ra">${p.rating?`<span class="rate"><b>${esc(rate(p.rating))}</b>${p.reviews?`<span class="rv">${p.reviews}&nbsp;отз.</span>`:''}</span>`:'<span class="mut">—</span>'}</td>
         <td class="c-ph">${p.phone?`<button class="mini call" data-call="${esc(p.id)}" title="Набрать ${esc(p.phone)}">📞 ${esc(p.phone)}</button>`:'<span class="mut">нет</span>'}</td>
         <td class="c-dm">${p.demo?`<a class="mini go" href="${esc(p.demo)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Открыть ↗</a>`
-          :(p.gen_prompt?`<button class="mini make" data-demo="${esc(p.id)}">Сделать</button>`
-          :`<span class="mut" title="нет промпта — лид ещё не прошёл Рокфеллера">—</span>`)}</td>
+          :(p.gen_prompt?`<button class="mini make" data-demo="${esc(p.id)}">Создать</button>`
+          :`<span class="mut" title="сначала нужен промпт из AI-разбора Rockefeller">Нужен AI-разбор</span>`)}</td>
       </tr>`;}).join('')}
     </tbody></table></div>`;
   };
@@ -807,7 +808,7 @@
   }
 
   /* ---------- Импорт ---------- */
-  let IMP=null; /* {rows, fmt, plan, file} */
+  let IMP=null; /* {rows, fmt, plan, file, hash, batchId} */
   V.import=()=>{
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     if(!canEdit) return `<div class="hint"><span>🔒</span><div>Импортировать данные может основатель, администратор или менеджер.</div></div>`;
@@ -839,7 +840,7 @@
     const { fmt, rows, plan, stats } = IMP;
     out.innerHTML=`
       <div class="panel" style="margin-top:16px">
-        <div class="panel-h"><h3>${esc(IMP.file)}</h3><span class="sub">${esc(fmt.label)}</span></div>
+        <div class="panel-h"><h3>${esc(IMP.file)}</h3><span class="sub">${esc(fmt.label)} · SHA-256 ${esc(IMP.hash.slice(0,10))}…</span></div>
         <div class="panel-b">
           <div class="sum">
             <div class="sc"><b>${rows.length}</b><span>строк в файле</span></div>
@@ -854,9 +855,8 @@
               `Новых (${plan.fresh.length}) добавлю. Существующих (${plan.existing.length}) обогащу свежими данными — телефон, рейтинг, скрипт, промпт. <b>Стадии, заметки, демки и историю звонков не трону.</b>`)}
             ${modeCard('add','Только новые',
               `Добавлю ${plan.fresh.length}. Существующие ${plan.existing.length} вообще не трогаю.`)}
-            ${modeCard('replace','Заменить всё',
-              `Сотру все ${plan.total} записей и залью ${rows.length} из файла. <b>Стадии, заметки, демки и звонки пропадут.</b>`,true)}
           </div>
+          <div class="hint" style="margin-top:12px"><span>🛡️</span><div><b>Полная замена отключена.</b> Пока нет серверной транзакции и отката, Workspace разрешает только безопасное слияние или добавление новых записей.</div></div>
           <div class="row-inline" style="margin-top:16px">
             <button class="btn gold" id="impRun">Импортировать</button>
             <button class="btn" id="impCancel">Отмена</button>
@@ -888,6 +888,9 @@
     const out=$('#impOut');
     out.innerHTML='<div class="panel" style="margin-top:16px"><div class="panel-b mut">Читаю файл…</div></div>';
     try{
+      const hash=await window.VC.fileFingerprint(file);
+      const previous=window.VC.findImported(hash);
+      if(previous) throw new Error('этот файл уже успешно импортировали на этом компьютере '+fmtDay(previous.at)+'. Повторная загрузка остановлена');
       const objs=await window.VC.readFileRows(file);
       if(!objs.length) throw new Error('файл пустой');
       const fmt=window.VC.detectFormat(objs);
@@ -896,7 +899,8 @@
       if(!stats.rows.length) throw new Error('не нашёл ни одной строки с названием компании');
       out.innerHTML='<div class="panel" style="margin-top:16px"><div class="panel-b mut">Сверяю с базой…</div></div>';
       const plan=await window.VC.planImport(stats.rows);
-      IMP={ file:file.name, fmt:fmt, rows:stats.rows, stats:stats, plan:plan };
+      const batchId=(window.crypto&&window.crypto.randomUUID)?window.crypto.randomUUID():('imp-'+Date.now());
+      IMP={ file:file.name, hash:hash, batchId:batchId, fmt:fmt, rows:stats.rows, stats:stats, plan:plan };
       renderPlan();
     }catch(e){
       out.innerHTML=`<div class="hint" style="margin-top:16px;border-color:var(--red)"><span>⚠️</span><div>Не вышло: ${esc(e.message||e)}</div></div>`;
@@ -906,16 +910,17 @@
   async function runImportUI(){
     const btn=$('#impRun'), msg=$('#impMsg');
     const mode=(document.querySelector('input[name="impMode"]:checked')||{}).value||'merge';
-    if(mode==='replace' && !confirm('Заменить всё?\n\nБудут стёрты '+IMP.plan.total+' записей вместе со стадиями, заметками, демками и историей звонков. Отменить это будет нельзя.')) return;
     btn.disabled=true; msg.style.color='';
     try{
-      const rep=await window.VC.runImport(IMP.plan, mode, m=>{ msg.textContent=m; });
+      const completed={ hash:IMP.hash, file:IMP.file, source:IMP.fmt.id, rows:IMP.rows.length, mode:mode, batchId:IMP.batchId, at:new Date().toISOString() };
+      const rep=await window.VC.runImport(IMP.plan, mode, m=>{ msg.textContent=m; },completed);
       DATA=await window.VC.loadData();
       const parts=[];
       if(rep.deleted) parts.push('стёрто '+rep.deleted);
       if(rep.added) parts.push('добавлено '+rep.added);
       if(rep.enriched) parts.push('обогащено '+rep.enriched);
       if(rep.skipped) parts.push('пропущено '+rep.skipped);
+      window.VC.rememberImport(completed);
       IMP=null;
       $('#impOut').innerHTML=`<div class="hint" style="margin-top:16px;border-color:var(--green)"><span>✅</span>
         <div><b>Готово:</b> ${esc(parts.join(', ')||'изменений нет')}. Теперь в базе ${DATA.projects.length} лидов.</div></div>`;
@@ -1323,10 +1328,11 @@
       .map(n=>`
       <a class="nav-item" data-id="${n.id}">
         <span class="ic">${svg(ICONS[n.id])}</span><span class="lbl">${n.label}</span>
-        ${n.id==='projects'&&raw?`<span class="badge">${raw}</span>`:''}
+        ${n.id==='projects'&&raw?`<span class="badge" data-raw-badge title="Новые лиды без обработки — нажми, чтобы открыть">${raw}</span>`:''}
         ${n.id==='dashboard'&&due?`<span class="badge hot">${due}</span>`:''}
       </a>`).join('');
     $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.id));
+    $$('[data-raw-badge]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); pFilter='new'; go('projects'); });
   }
 
   function renderUser(){

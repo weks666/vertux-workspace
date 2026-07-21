@@ -83,6 +83,29 @@ async function readFileRows(file){
   return rowsToObjects(parseCSV(await file.text()));
 }
 
+/* Отпечаток и локальный журнал защищают от случайной повторной загрузки одного
+ * и того же файла. Журнал пишется только ПОСЛЕ успешного импорта. */
+const IMPORT_HISTORY_KEY='vertux_workspace_import_history_v1';
+async function fileFingerprint(file){
+  if(!window.crypto||!window.crypto.subtle) throw new Error('браузер не поддерживает безопасную проверку файла');
+  const digest=await window.crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function importHistory(){
+  try{
+    const value=JSON.parse(localStorage.getItem(IMPORT_HISTORY_KEY)||'[]');
+    return Array.isArray(value)?value:[];
+  }catch(e){ return []; }
+}
+function findImported(hash){ return importHistory().find(item=>item&&item.hash===hash)||null; }
+function rememberImport(entry){
+  try{
+    const history=importHistory().filter(item=>item&&item.hash!==entry.hash);
+    history.unshift(entry);
+    localStorage.setItem(IMPORT_HISTORY_KEY,JSON.stringify(history.slice(0,50)));
+  }catch(e){ console.warn('[Workspace] не удалось сохранить локальный журнал импорта'); }
+}
+
 /* ---------- Форматы источников ---------- */
 const SOCIAL=/(t\.me|telegram|vk\.com|instagram|facebook|wa\.me|whatsapp|youtube|max\.ru|ok\.ru|api\.whatsapp)/i;
 const pick=(o,...keys)=>{ for(const k of keys){ const v=o[k]; if(v!=null&&String(v).trim()!=='') return String(v).trim(); } return ''; };
@@ -220,21 +243,25 @@ async function planImport(rows){
   return { fresh:fresh, existing:existing, total:data?data.length:0 };
 }
 
-async function runImport(plan, mode, onProgress){
-  const c=db();
-  const report={ added:0, enriched:0, skipped:0, deleted:0 };
-  const say=m=>{ if(onProgress) onProgress(m); };
-
+async function runImport(plan, mode, onProgress, meta){
   if(mode==='replace'){
-    say('стираю старые записи…');
-    const { error } = await c.from('projects').delete().not('id','is',null);
-    if(error) throw error;
-    report.deleted=plan.total;
+    throw new Error('полная замена отключена: сначала нужен серверный импорт с транзакцией и откатом');
   }
 
-  const toInsert = mode==='replace' ? plan.fresh.concat(plan.existing.map(r=>{ const x={...r}; delete x.id; return x; })) : plan.fresh;
+  const c=db();
+  const report={ added:0, enriched:0, skipped:0, deleted:0, batchId:(meta&&meta.batchId)||null };
+  const say=m=>{ if(onProgress) onProgress(m); };
+
+  const importMeta=meta?{
+    batch_id:meta.batchId||null, file_hash:meta.hash||null, file_name:meta.file||null,
+    source:meta.source||null, imported_at:new Date().toISOString(),
+  }:null;
+  const toInsert=plan.fresh;
   for(let i=0;i<toInsert.length;i+=100){
-    const chunk=toInsert.slice(i,i+100).map(r=>({ ...r, stage:'new', progress:5 }));
+    const chunk=toInsert.slice(i,i+100).map(r=>({
+      ...r, stage:'new', progress:5,
+      raw:importMeta?{ ...((r.raw&&typeof r.raw==='object')?r.raw:{}), _import:importMeta }:r.raw,
+    }));
     say('добавляю '+(i+chunk.length)+' из '+toInsert.length+'…');
     const { error } = await c.from('projects').insert(chunk);
     if(error) throw error;
@@ -305,6 +332,7 @@ window.VC = {
   CONFIG, loadData, loadProjects,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw,
   logCall, callsOf, aiCall, adminCall,
-  readFileRows, detectFormat, mapRows, planImport, runImport,
+  readFileRows, fileFingerprint, findImported, rememberImport,
+  detectFormat, mapRows, planImport, runImport,
   FORMATS,
 };
