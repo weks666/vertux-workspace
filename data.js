@@ -281,8 +281,25 @@ const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{})
 const adminCall=(action,payload)=>hookCall(CONFIG.adminUrl,{ action:action, ...(payload||{}) });
 const enrichCall=(limit)=>hookCall(CONFIG.enrichUrl,{ limit:limit });
 
+/* 404 у n8n означает, что production webhook не зарегистрирован. Остальные ответы
+ * (включая 400 без токена) означают: воркфлоу активен и дошёл до своих ворот. */
+async function hookActive(url){
+  if(!url) return false;
+  try{
+    const res=await fetch(url,{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+    });
+    return res.status!==404;
+  }catch(e){ return false; }
+}
+
 async function loadData(){
-  const projects=await loadProjects();
+  const [projects,aiActive,adminActive,enrichActive]=await Promise.all([
+    loadProjects(), hookActive(CONFIG.aiUrl), hookActive(CONFIG.adminUrl), hookActive(CONFIG.enrichUrl),
+  ]);
+  CONFIG.aiActive=aiActive;
+  CONFIG.adminActive=adminActive;
+  CONFIG.enrichActive=enrichActive;
   return { projects:projects||[], widgets:WIDGETS, _source:projects?'db':'offline' };
 }
 

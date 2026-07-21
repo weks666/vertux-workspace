@@ -6,7 +6,7 @@
         "httpMethod": "POST",
         "path": "vertux-ai-trainer",
         "responseMode": "responseNode",
-        "options": { "allowedOrigins": "*" }
+        "options": { "allowedOrigins": "https://weks666.github.io" }
       },
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",

@@ -443,6 +443,10 @@
 
   async function renderTeam(){
     const box=$('#teamList'); if(!box) return;
+    if(!window.VC.CONFIG.adminActive){
+      box.innerHTML=`<div class="panel-b"><div class="hint" style="margin:0"><span>🔌</span><div><b>Список сотрудников подготовлен, но серверный мост ещё не активирован.</b> Нужен воркфлоу <code>n8n/vertux-admin.json</code> в n8n. До этого приглашения ниже работают, а роли сотрудников менять нельзя.</div></div></div>`;
+      return;
+    }
     try{
       const j=await window.VC.adminCall('list_users');
       const users=j.users||[];
@@ -557,7 +561,7 @@
              chat:[], difficulty:'занятой', tts:true, review:'', lastHintLine:0, lastHintAt:0, busy:false };
   let SREC=null;
 
-  const aiOn=()=>!!window.VC.CONFIG.aiUrl;
+  const aiOn=()=>window.VC.CONFIG.aiActive===true;
   const sttOn=()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition);
   const trLead=()=>DATA.projects.find(x=>String(x.id)===String(TR.leadId))||null;
   const leadCtx=p=>p?{ niche:String(p.niche||'').slice(0,80), city:p.city||'', issues:String(p.issues||'').slice(0,600),
@@ -582,7 +586,7 @@
       <div class="tbl-tools">
         ${tabs.map(([k,l])=>`<button class="chip ${TR.tab===k?'active':''}" data-ttab="${k}">${l}</button>`).join('')}
       </div>
-      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>Мозг тренера не подключён.</b> Live-транскрипция работает и так, а подсказки, разбор и тренажёр заработают после импорта воркфлоу <code>backend/n8n_vertux_ai_trainer.json</code> в n8n (2 минуты: импорт → выбрать кредензию OpenRouter → Activate → вебхук-адрес вписать в <code>data.js → aiUrl</code>).</div></div>`}`;
+      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>Мозг тренера подготовлен, но production webhook n8n пока не активирован.</b> Live-транскрипция работает без него. Для подсказок, разбора и тренажёра импортируй <code>n8n/vertux-ai-trainer.json</code>, выбери кредензию OpenRouter и нажми Activate. Workspace увидит его автоматически при следующем входе.</div></div>`}`;
 
     if(TR.tab==='live') return head+`
       ${sttOn()?'':'<div class="hint"><span>⚠️</span><div>Этот браузер не умеет распознавать речь — нужен Chrome или Edge.</div></div>'}
@@ -792,6 +796,7 @@
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     if(!canEdit) return `<div class="hint"><span>🔒</span><div>Импортировать данные может основатель, администратор или менеджер.</div></div>`;
     const rawN=DATA.projects.filter(p=>!p.processed).length;
+    const enrichOn=window.VC.CONFIG.enrichActive===true;
     return `
     <div class="hint"><span>📥</span><div>Кидай сюда <b>CSV</b> или <b>XLSX</b> — из 2GIS-парсера (сырьё) или из Рокфеллера (готовый список со скриптами). Формат определится сам, а перед записью покажу, что изменится.</div></div>
     <div class="panel" style="margin-bottom:16px">
@@ -801,10 +806,10 @@
           <span class="mut" style="font-size:13px">Обогатить</span>
           <select id="enrichN"><option>5</option><option selected>10</option><option>15</option></select>
           <span class="mut" style="font-size:13px">лидов</span>
-          <button class="btn gold" id="enrichBtn" ${rawN?'':'disabled'}>Прогнать через ИИ</button>
+          <button class="btn gold" id="enrichBtn" ${(rawN&&enrichOn)?'':'disabled'}>Прогнать через ИИ</button>
           <span id="enrichMsg" class="mut" style="font-size:12.5px"></span>
         </div>
-        <div class="mut" style="font-size:12px;margin-top:8px">Берёт самых рейтинговых из сырых, заглядывает на их сайты и пишет: тип (редизайн/с нуля), болячки, контекст, скрипт звонка и промпт демки — как Рокфеллер, только сам. Примерно 20–40 секунд на лида.</div>
+        <div class="mut" style="font-size:12px;margin-top:8px">${enrichOn?'Берёт самых рейтинговых из сырых, заглядывает на их сайты и пишет: тип (редизайн/с нуля), болячки, контекст, скрипт звонка и промпт демки. Примерно 20–40 секунд на лида.':'Модуль готов, но webhook n8n ещё не активирован. Импортируй <code>n8n/vertux-rockfeller.json</code>, выбери OpenRouter и Postgres, затем Activate.'}</div>
       </div>
     </div>
     <div class="drop" id="drop">
