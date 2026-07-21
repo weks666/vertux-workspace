@@ -1,4 +1,4 @@
-const CACHE = 'vertux-workspace-v10';
+const CACHE = 'vertux-workspace-v11';
 const ASSETS = ['./', './index.html', './styles.css', './data.js', './auth.js', './app.js', './manifest.webmanifest', './icon.svg', './vendor/supabase.js', './vendor/xlsx.full.min.js'];
 
 self.addEventListener('install', e => {

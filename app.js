@@ -444,7 +444,23 @@
   async function renderTeam(){
     const box=$('#teamList'); if(!box) return;
     if(!window.VC.CONFIG.adminActive){
-      box.innerHTML=`<div class="panel-b"><div class="hint" style="margin:0"><span>🔌</span><div><b>Список сотрудников подготовлен, но серверный мост ещё не активирован.</b> Нужен воркфлоу <code>n8n/vertux-admin.json</code> в n8n. До этого приглашения ниже работают, а роли сотрудников менять нельзя.</div></div></div>`;
+      const invites=await window.VCAuth.listInvites().catch(()=>[]);
+      const used=invites.filter(i=>i.used_by&&(!USER||String(i.used_by)!==String(USER.id)));
+      const roleLabel=r=>((window.VCAuth.ROLES[r]||{}).label)||r||'наблюдатель';
+      box.innerHTML=`<div class="table-scroll"><table class="data"><thead><tr>
+        <th>Сотрудник</th><th>Уровень</th><th>Источник</th><th>Активирован</th>
+      </tr></thead><tbody>
+        <tr style="cursor:default"><td><div class="co"><div class="logo s-agr">${initials((USER&&(USER.name||USER.email))||'Я')}</div>
+          <div class="co-t"><span class="cn">${esc((USER&&USER.name)||'Ваш аккаунт')} <span class="pill s-demo"><i></i>это вы</span></span>
+          <span class="csub">${esc((USER&&USER.email)||'')}</span></div></div></td>
+          <td><span class="pill s-agr"><i></i>${esc(roleLabel(USER&&USER.roleKey))}</span></td><td class="mut">основной аккаунт</td><td class="mut">—</td></tr>
+        ${used.map(i=>`<tr style="cursor:default"><td><div class="co"><div class="logo s-cont">${initials(i.note||'Сотрудник')}</div>
+          <div class="co-t"><span class="cn">${esc(i.note||'Сотрудник по приглашению')}</span>
+          <span class="csub">аккаунт ···${esc(String(i.used_by).slice(-6))}</span></div></div></td>
+          <td><span class="pill s-cont"><i></i>${esc(roleLabel(i.role))}</span></td><td class="mut">код ${esc(i.code)}</td>
+          <td class="mut">${esc(String(i.used_at||i.created_at||'').slice(0,10))}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="panel-b" style="padding-top:10px"><div class="hint" style="margin:0"><span>🔌</span><div><b>Показан резервный список по использованным приглашениям.</b> Email сотрудников, последний вход и смена роли появятся после импорта и активации <code>n8n/vertux-admin.json</code>.</div></div></div>`;
       return;
     }
     try{
