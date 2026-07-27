@@ -1384,7 +1384,13 @@
     const lo=$('#logoutBtn');
     if(window.VCAuth.enabled()){
       lo.hidden=false;
-      lo.onclick=async()=>{ await window.VCAuth.signOut(); location.reload(); };
+      if(window.VCAuth.nexusManaged&&window.VCAuth.nexusManaged()){
+        lo.title='Вернуться в Nexus';
+        lo.setAttribute('aria-label','Вернуться в Nexus');
+        lo.onclick=()=>window.nexusProduct.close('products');
+      }else{
+        lo.onclick=async()=>{ await window.VCAuth.signOut(); location.reload(); };
+      }
     }
   }
 
@@ -1406,6 +1412,16 @@
     const el=$('#login'); el.hidden=false;
     let mode='login';
     const nameEl=$('#loginName'), codeEl=$('#loginCode'), btn=$('#loginBtn'), toggle=$('#loginToggle'), err=$('#loginErr');
+    if(window.VCAuth.nexusManaged&&window.VCAuth.nexusManaged()){
+      $('#loginEmail').hidden=true; $('#loginEmail').required=false;
+      $('#loginPass').hidden=true; $('#loginPass').required=false;
+      nameEl.hidden=true; nameEl.required=false; codeEl.hidden=true; codeEl.required=false; toggle.hidden=true;
+      $('.login-sub').textContent='Связанный вход через Vertux Nexus';
+      err.textContent=(window.VCAuth.lastError&&window.VCAuth.lastError())||'Nexus не смог выдать сессию Workspace. Закройте окно и повторите запуск продукта.';
+      btn.type='button'; btn.textContent='Вернуться в Nexus';
+      btn.onclick=()=>window.nexusProduct.close('products');
+      return;
+    }
     function applyMode(){
       const signup=mode==='signup';
       nameEl.hidden=!signup; nameEl.required=signup;
