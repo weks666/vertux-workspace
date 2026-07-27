@@ -24,6 +24,7 @@
     shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z M9 12l2 2 4-4',
     money:'M12 3v18M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7',
     trainer:'M4 14a8 8 0 0 1 16 0M4 14v3a2 2 0 0 0 2 2h1v-6H4m16 0h-3v6h1a2 2 0 0 0 2-2v-4M14 21h-2',
+    services:'M4 7h16M7 4v6m10-6v6M5 13h14v7H5v-7zm4 3h6',
   };
   const svg=p=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${p}"/></svg>`;
 
@@ -36,6 +37,7 @@
     {id:'import',   label:'Импорт'},
     {id:'team',     label:'Команда'},
     {id:'shield',   label:'Shield'},
+    {id:'services', label:'Сервисы Vertux', service:true},
   ];
   const SUB={
     dashboard:'что происходит в агентстве',
@@ -46,6 +48,7 @@
     import:'залить CSV/XLSX из парсера или Рокфеллера',
     team:'доступы и приглашения',
     shield:'защита наших виджетов',
+    services:'подписка, продукты, использование, поддержка и доступы',
   };
 
   const TYPE={ creation:['t-new','с нуля'], redesign:['t-re','редизайн'] };
@@ -74,7 +77,40 @@
     refused:  {label:'Отказ',        ic:'✖',  stage:'refused'},
   };
 
-  let DATA=null, USER=null, view='dashboard', pFilter='all', q='';
+  let DATA=null, USER=null, view='dashboard', pFilter='all', q='', serviceModulePromise=null;
+
+  async function ensureServiceModule(){
+    if(customElements.get('vertux-service-center')) return;
+    if(serviceModulePromise) return serviceModulePromise;
+    const bridge=window.nexusProduct&&window.nexusProduct.service;
+    if(!bridge||typeof bridge.config!=='function') throw new Error('Откройте Workspace в установленном приложении Vertux');
+    serviceModulePromise=(async()=>{
+      const result=await bridge.config();
+      if(!result||result.ok!==true) throw new Error((result&&result.error&&result.error.message)||'Nexus не выдал конфигурацию модуля');
+      const url=new URL(result.data.assetUrl);
+      if(!/^https?:$/.test(url.protocol)||url.pathname!=='/service-module/v1/vertux-service-center.js') throw new Error('Nexus вернул недоверенный адрес модуля');
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');
+        script.src=url.href;
+        script.onload=resolve;
+        script.onerror=()=>reject(new Error('Не удалось загрузить системный модуль Vertux'));
+        document.head.appendChild(script);
+      });
+    })();
+    try{ await serviceModulePromise; }
+    catch(error){ serviceModulePromise=null; throw error; }
+  }
+
+  async function mountServiceModule(){
+    const mount=$('#serviceModuleMount');
+    if(!mount) return;
+    try{
+      await ensureServiceModule();
+      if($('#serviceModuleMount')===mount) mount.innerHTML='<vertux-service-center></vertux-service-center>';
+    }catch(error){
+      if($('#serviceModuleMount')===mount) mount.innerHTML=`<div class="hint"><span>↗</span><div><b>Сервисный модуль пока недоступен в этом режиме.</b><br>${esc(error.message||error)}. Бизнес-разделы Workspace продолжают работать независимо.</div></div>`;
+    }
+  }
 
   /* ---------- даты ---------- */
   const dayKey=d=>{const x=new Date(d);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');};
@@ -138,6 +174,8 @@
 
   /* ---------- views ---------- */
   const V={};
+
+  V.services=()=>`<div id="serviceModuleMount"><div class="empty"><div class="e-ic">V</div><div>Подключаю сервисы Vertux…</div></div></div>`;
 
   V.dashboard=()=>{
     const p=DATA.projects;
@@ -1281,6 +1319,7 @@
     if(view==='shield') wireShield();
     if(view==='trainer') wireTrainer();
     if(view==='team') renderTeam();
+    if(view==='services') void mountServiceModule();
     const nx=$('#nextCallBtn'); if(nx) nx.onclick=nextLead;
     /* удаление записи из журнала звонков */
     $$('button[data-delcall]').forEach(b=>b.onclick=async e=>{
@@ -1323,14 +1362,16 @@
   function renderNav(){
     const raw=DATA.projects.filter(p=>stageOf(p)==='new').length;
     const due=DATA.projects.filter(isDue).length;
-    $('#nav').innerHTML='<div class="nav-sec">агентство</div>'+NAV
-      .filter(n=>!n.finance||(USER&&USER.can&&USER.can.finance))
+    const visible= NAV.filter(n=>!n.finance||(USER&&USER.can&&USER.can.finance));
+    const navItems=(items)=>items
       .map(n=>`
       <a class="nav-item" data-id="${n.id}">
         <span class="ic">${svg(ICONS[n.id])}</span><span class="lbl">${n.label}</span>
         ${n.id==='projects'&&raw?`<span class="badge" data-raw-badge title="Новые лиды без обработки — нажми, чтобы открыть">${raw}</span>`:''}
         ${n.id==='dashboard'&&due?`<span class="badge hot">${due}</span>`:''}
       </a>`).join('');
+    $('#nav').innerHTML='<div class="nav-sec">агентство</div>'+navItems(visible.filter(n=>!n.service))
+      +'<div class="nav-sec">Vertux Studio</div>'+navItems(visible.filter(n=>n.service));
     $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.id));
     $$('[data-raw-badge]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); pFilter='new'; go('projects'); });
   }
