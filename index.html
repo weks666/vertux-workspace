@@ -40,11 +40,13 @@
 
       <div class="side-foot">
         <div class="who">
-          <div class="ava" id="userAva">·</div>
-          <div class="who-text">
-            <span class="who-name" id="userName">загрузка…</span>
-            <span class="who-role" id="userRole"></span>
-          </div>
+          <button class="who-main" id="profileBtn" type="button" title="Открыть профиль">
+            <span class="ava" id="userAva">·</span>
+            <span class="who-text">
+              <span class="who-name" id="userName">загрузка…</span>
+              <span class="who-role" id="userRole"></span>
+            </span>
+          </button>
           <button class="logout-btn" id="logoutBtn" title="Выйти" aria-label="Выйти" hidden>⏻</button>
         </div>
         <div class="src" id="srcPill" title="Источник данных">
@@ -60,6 +62,7 @@
           <span class="crumb-sub" id="pageSub"></span>
         </div>
         <div class="top-actions">
+          <button class="btn product-switcher" id="productSwitcher" type="button" hidden><span aria-hidden="true">V</span> Vertux Workspace⌄</button>
           <div class="search">
             <span class="s-ic">⌕</span>
             <input id="globalSearch" type="text" placeholder="Поиск по проектам, лидам…" />

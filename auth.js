@@ -7,6 +7,212 @@
   let nexusBootstrapPromise = null;
   let nexusGuardTimer = null;
   let lastNexusError = '';
+  const BROWSER_SESSION_KEY = 'vertux_nexus_product_session_v1';
+  let pendingBrowserLaunch = null;
+  let browserSession = readBrowserSession();
+
+  function nexusOrigin() {
+    const value = String(window.VC?.CONFIG?.nexusOrigin || 'https://nexus.vertux.online').replace(/\/+$/u, '');
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && url.username === '' && url.password === ''
+        ? url.origin
+        : 'https://nexus.vertux.online';
+    } catch (_) {
+      return 'https://nexus.vertux.online';
+    }
+  }
+
+  function nexusRequired() {
+    return window.VC?.CONFIG?.nexusRequired === true;
+  }
+
+  function readBrowserSession() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(BROWSER_SESSION_KEY) || 'null');
+      if (!value || typeof value.token !== 'string' || typeof value.productId !== 'string'
+        || new Date(value.expiresAt).getTime() <= Date.now()) {
+        sessionStorage.removeItem(BROWSER_SESSION_KEY);
+        return null;
+      }
+      return value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveBrowserSession(value) {
+    browserSession = value;
+    try {
+      sessionStorage.setItem(BROWSER_SESSION_KEY, JSON.stringify(value));
+    } catch (_) {
+      // В приватном режиме сессия всё равно останется в памяти текущей вкладки.
+    }
+  }
+
+  function clearBrowserSession() {
+    browserSession = null;
+    try {
+      sessionStorage.removeItem(BROWSER_SESSION_KEY);
+    } catch (_) {
+      // Нет доступного sessionStorage.
+    }
+  }
+
+  function takeBrowserLaunch() {
+    const raw = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+    if (!raw) return null;
+    const params = new URLSearchParams(raw);
+    const ticket = String(params.get('nexusLaunch') || '');
+    const productId = String(params.get('nexusProduct') || '');
+    if (!ticket || !/^[A-Za-z0-9_-]{20,512}$/u.test(ticket)
+      || !/^[A-Za-z0-9-]{1,80}$/u.test(productId)) return null;
+    const returnHash = String(params.get('returnHash') || '');
+    try {
+      history.replaceState(null, '', `${location.pathname}${location.search}${returnHash ? `#${encodeURIComponent(returnHash)}` : ''}`);
+    } catch (_) {
+      location.hash = '';
+    }
+    return { ticket: ticket, productId: productId };
+  }
+
+  pendingBrowserLaunch = takeBrowserLaunch();
+
+  async function productRequest(path, options) {
+    const session = browserSession;
+    if (!session?.token) {
+      return { ok: false, status: 401, error: { code: 'PRODUCT_SESSION_REQUIRED', message: 'Откройте Workspace из Vertux Nexus' } };
+    }
+    const initOptions = options || {};
+    const response = await fetch(nexusOrigin() + path, {
+      method: initOptions.method || 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer ' + session.token,
+        ...(initOptions.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: initOptions.body === undefined ? undefined : JSON.stringify(initOptions.body),
+      credentials: 'omit',
+      mode: 'cors',
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(function () {
+      return { ok: false, error: { code: 'NEXUS_RESPONSE_INVALID', message: 'Nexus вернул некорректный ответ' } };
+    });
+    if (response.status === 401 || response.status === 403) {
+      clearBrowserSession();
+    }
+    return { ...payload, status: response.status };
+  }
+
+  async function exchangeBrowserLaunch() {
+    if (!pendingBrowserLaunch) {
+      throw new Error('Сессия Workspace отсутствует. Откройте продукт из Vertux Nexus.');
+    }
+    const launch = pendingBrowserLaunch;
+    pendingBrowserLaunch = null;
+    const response = await fetch(nexusOrigin() + '/api/product-launch/exchange', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket: launch.ticket, productId: launch.productId }),
+      credentials: 'omit',
+      mode: 'cors',
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(function () {
+      return { ok: false, error: { message: 'Nexus вернул некорректный ответ' } };
+    });
+    if (!response.ok || payload.ok !== true) {
+      throw bridgeError(payload, 'Ссылка запуска истекла. Откройте Workspace из Nexus снова.');
+    }
+    const data = payload.data || {};
+    if (!data.productSessionToken || !data.productSessionExpiresAt) {
+      throw new Error('Nexus не выдал product-scoped сессию');
+    }
+    saveBrowserSession({
+      token: String(data.productSessionToken),
+      expiresAt: String(data.productSessionExpiresAt),
+      productId: String(data.productId),
+      organizationId: String(data.organizationId),
+      user: data.user || null,
+      serviceModule: data.serviceModule || null,
+    });
+    return data;
+  }
+
+  function installBrowserBridge() {
+    if (window.nexusProduct || (!pendingBrowserLaunch && !browserSession)) return;
+    const service = Object.freeze({
+      config: function () { return productRequest('/api/product-session/service-config'); },
+      overview: function () { return productRequest('/api/product-session/service-center'); },
+      createTicket: function (value) { return productRequest('/api/product-session/support', { method: 'POST', body: value || {} }); },
+      ticketMessages: function (ticketId) {
+        return productRequest('/api/product-session/support/' + encodeURIComponent(String(ticketId || '')) + '/messages');
+      },
+      replyTicket: function (value) {
+        return productRequest('/api/product-session/support/' + encodeURIComponent(String(value?.ticketId || '')) + '/messages', {
+          method: 'POST',
+          body: { message: value?.message || '' },
+        });
+      },
+      invite: function (value) { return productRequest('/api/product-session/invitations', { method: 'POST', body: value || {} }); },
+      revokeInvitation: function (invitationId) {
+        return productRequest('/api/product-session/invitations/' + encodeURIComponent(String(invitationId || '')) + '/revoke', {
+          method: 'POST',
+          body: {},
+        });
+      },
+      setMemberStatus: function (value) {
+        return productRequest('/api/product-session/members/' + encodeURIComponent(String(value?.userId || '')) + '/status', {
+          method: 'POST',
+          body: { status: value?.status || '' },
+        });
+      },
+      updateMemberAccess: function (value) {
+        return productRequest('/api/product-session/members/' + encodeURIComponent(String(value?.userId || '')) + '/access', {
+          method: 'PATCH',
+          body: {
+            role: value?.role || '',
+            accessMode: value?.accessMode || '',
+            productIds: Array.isArray(value?.productIds) ? value.productIds : [],
+          },
+        });
+      },
+    });
+    window.nexusProduct = Object.freeze({
+      close: function (view) {
+        const target = view === 'profile' ? 'profile' : view === 'support' ? 'support' : 'launch';
+        location.assign(nexusOrigin() + '/#' + target);
+        return Promise.resolve({ closed: true, view: target });
+      },
+      logout: async function () {
+        const result = browserSession
+          ? await productRequest('/api/product-session/logout', { method: 'POST', body: {} }).catch(function () { return null; })
+          : null;
+        clearBrowserSession();
+        return result || { ok: true, data: { loggedOut: true } };
+      },
+      copyText: async function (text) {
+        try {
+          await navigator.clipboard.writeText(String(text || ''));
+          return { copied: true };
+        } catch (_) {
+          return { copied: false };
+        }
+      },
+      identity: Object.freeze({
+        status: function () { return productRequest('/api/product-session/status'); },
+        bootstrap: function () {
+          return exchangeBrowserLaunch().then(function (data) { return { ok: true, data: data }; }).catch(function (error) {
+            return { ok: false, error: { code: error.code || 'NEXUS_IDENTITY_FAILED', message: error.message } };
+          });
+        },
+      }),
+      service: service,
+    });
+  }
+
+  installBrowserBridge();
 
   function enabled() {
     const c = window.VC && window.VC.CONFIG;
@@ -44,10 +250,13 @@
     nexusGuardTimer = window.setInterval(async function () {
       try {
         const result = await nexusBridge().status();
-        if (!result || result.ok !== true || result.data.active !== false) return;
+        if (result && result.ok === true && result.data.active !== false) return;
         const c = init();
         if (c) await c.auth.signOut({ scope: 'local' }).catch(function () {});
-        sessionStorage.setItem('vertux-nexus-access-message', result.data.reason || 'Доступ к Workspace приостановлен в Nexus.');
+        sessionStorage.setItem(
+          'vertux-nexus-access-message',
+          result?.data?.reason || result?.error?.message || 'Доступ к Workspace приостановлен в Nexus.',
+        );
         location.reload();
       } catch (_) {
         // Временный сетевой сбой не завершает рабочую сессию.
@@ -104,6 +313,7 @@
 
   async function currentUser() {
     if (!enabled()) return { email: 'демо-режим', name: 'Степан', roleKey: 'owner', role: ROLES.owner.label, can: ROLES.owner, demo: true };
+    if (nexusRequired() && !nexusManaged()) return null;
     const c = init();
     if (nexusManaged()) {
       try {
@@ -118,7 +328,19 @@
     const meta = u.user_metadata || {};
     const app = u.app_metadata || {};
     const key = ROLES[app.role] ? app.role : 'viewer';
-    return { id: u.id, email: u.email, name: meta.name || u.email.split('@')[0], roleKey: key, role: ROLES[key].label, can: ROLES[key] };
+    const nexusUser = browserSession?.user || null;
+    return {
+      id: u.id,
+      email: nexusUser?.email || u.email,
+      name: nexusUser?.name || meta.name || u.email.split('@')[0],
+      nexusUserId: nexusUser?.id || null,
+      roleKey: key,
+      role: ROLES[key].label,
+      can: ROLES[key],
+      nexusManaged: nexusManaged(),
+      productId: browserSession?.productId || null,
+      organizationId: browserSession?.organizationId || null,
+    };
   }
 
   async function signIn(email, password) {
@@ -173,7 +395,27 @@
 
   async function signOut() {
     if (!enabled()) return;
+    if (nexusManaged() && typeof window.nexusProduct?.logout === 'function') {
+      await window.nexusProduct.logout().catch(function () {});
+    }
     await init().auth.signOut({ scope: 'local' });
+    clearBrowserSession();
+  }
+
+  function openNexus(view) {
+    const target = view === 'profile' ? 'profile' : view === 'support' ? 'support' : 'launch';
+    if (typeof window.nexusProduct?.close === 'function') return window.nexusProduct.close(target === 'launch' ? 'products' : target);
+    location.assign(nexusOrigin() + '/#' + target);
+    return Promise.resolve({ opened: true, view: target });
+  }
+
+  function sessionContext() {
+    return browserSession ? {
+      productId: browserSession.productId,
+      organizationId: browserSession.organizationId,
+      expiresAt: browserSession.expiresAt,
+      user: browserSession.user || null,
+    } : null;
   }
 
   function lastError() {
@@ -206,6 +448,7 @@
     enabled: enabled, currentUser: currentUser, signIn: signIn,
     signUpWithCode: signUpWithCode, createInvite: createInvite, listInvites: listInvites,
     signOut: signOut, humanError: humanError,
-    nexusManaged: nexusManaged, lastError: lastError,
+    nexusManaged: nexusManaged, nexusRequired: nexusRequired, lastError: lastError,
+    openNexus: openNexus, sessionContext: sessionContext,
   };
 })();

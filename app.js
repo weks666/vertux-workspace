@@ -25,6 +25,10 @@
     money:'M12 3v18M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7',
     trainer:'M4 14a8 8 0 0 1 16 0M4 14v3a2 2 0 0 0 2 2h1v-6H4m16 0h-3v6h1a2 2 0 0 0 2-2v-4M14 21h-2',
     services:'M4 7h16M7 4v6m10-6v6M5 13h14v7H5v-7zm4 3h6',
+    subscription:'M5 5h14v14H5V5zm0 5h14M9 15h2',
+    support:'M12 21a9 9 0 1 0-9-9v4l3-1v-3a6 6 0 1 1 6 6h-2',
+    access:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20a6 6 0 0 1 12 0M14 20a6 6 0 0 1 8-5',
+    profile:'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0',
   };
   const svg=p=>`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${p}"/></svg>`;
 
@@ -35,9 +39,9 @@
     {id:'trainer',  label:'Тренер'},
     {id:'money',    label:'Деньги', finance:true},
     {id:'import',   label:'Импорт'},
-    {id:'team',     label:'Команда'},
-    {id:'shield',   label:'Shield'},
-    {id:'services', label:'Сервисы Vertux', service:true},
+    {id:'subscription', label:'Подписка', service:true},
+    {id:'support', label:'Поддержка', service:true},
+    {id:'access', label:'Доступы', service:true},
   ];
   const SUB={
     dashboard:'что происходит в агентстве',
@@ -46,9 +50,10 @@
     trainer:'live-суфлёр, разбор звонков, тренажёр',
     money:'выручка, доли команды, прогноз',
     import:'залить CSV/XLSX из парсера или Рокфеллера',
-    team:'доступы и приглашения',
-    shield:'защита наших виджетов',
-    services:'подписка, продукты, использование, поддержка и доступы',
+    subscription:'тариф, реальные лимиты и только измеренное использование',
+    support:'обращения в Vertux и история ответов',
+    access:'сотрудники, роли, приглашения и продукты из Nexus',
+    profile:'ваш аккаунт Vertux и безопасность входа',
   };
 
   const TYPE={ creation:['t-new','с нуля'], redesign:['t-re','редизайн'] };
@@ -88,7 +93,7 @@
       const result=await bridge.config();
       if(!result||result.ok!==true) throw new Error((result&&result.error&&result.error.message)||'Nexus не выдал конфигурацию модуля');
       const url=new URL(result.data.assetUrl);
-      if(!/^https?:$/.test(url.protocol)||url.pathname!=='/service-module/v1/vertux-service-center.js') throw new Error('Nexus вернул недоверенный адрес модуля');
+      if(!/^https?:$/.test(url.protocol)||url.pathname!=='/service-module/v1.2/vertux-service-center.js') throw new Error('Nexus вернул недоверенный адрес модуля');
       await new Promise((resolve,reject)=>{
         const script=document.createElement('script');
         script.src=url.href;
@@ -101,12 +106,17 @@
     catch(error){ serviceModulePromise=null; throw error; }
   }
 
-  async function mountServiceModule(){
+  async function mountServiceModule(section){
     const mount=$('#serviceModuleMount');
     if(!mount) return;
     try{
       await ensureServiceModule();
-      if($('#serviceModuleMount')===mount) mount.innerHTML='<vertux-service-center></vertux-service-center>';
+      if($('#serviceModuleMount')===mount){
+        const module=document.createElement('vertux-service-center');
+        module.className='service-host';
+        module.setAttribute('section',section||'subscription');
+        mount.replaceChildren(module);
+      }
     }catch(error){
       if($('#serviceModuleMount')===mount) mount.innerHTML=`<div class="hint"><span>↗</span><div><b>Сервисный модуль пока недоступен в этом режиме.</b><br>${esc(error.message||error)}. Бизнес-разделы Workspace продолжают работать независимо.</div></div>`;
     }
@@ -175,7 +185,22 @@
   /* ---------- views ---------- */
   const V={};
 
-  V.services=()=>`<div id="serviceModuleMount"><div class="empty"><div class="e-ic">V</div><div>Подключаю сервисы Vertux…</div></div></div>`;
+  const serviceView=()=>`<div id="serviceModuleMount"><div class="empty"><div class="e-ic">V</div><div>Подключаю системный модуль Vertux…</div></div></div>`;
+  V.subscription=serviceView;
+  V.support=serviceView;
+  V.access=serviceView;
+  V.profile=()=>`<div class="profile-grid">
+    <section class="panel profile-card">
+      <div class="profile-identity"><div class="profile-avatar">${initials((USER&&USER.name)||'V')}</div><div><span class="mut">Аккаунт Vertux</span><h2>${esc((USER&&USER.name)||'Пользователь')}</h2><p>${esc((USER&&USER.email)||'')}</p></div></div>
+      <dl class="profile-details">
+        <div><dt>Роль в Workspace</dt><dd>${esc((USER&&USER.role)||'—')}</dd></div>
+        <div><dt>Вход</dt><dd>${USER&&USER.nexusManaged?'Через Vertux Nexus':'Локальный режим'}</dd></div>
+        <div><dt>Product identity</dt><dd>${USER&&USER.id?esc(String(USER.id).slice(0,8)+'…'):'—'}</dd></div>
+      </dl>
+      <div class="profile-actions"><button class="btn gold" id="profileNexusBtn">Имя, пароль и 2FA в Nexus</button><button class="btn" id="profileProductsBtn">Сменить продукт</button><button class="btn danger-text" id="profileLogoutBtn">Выйти</button></div>
+    </section>
+    <aside class="panel profile-note"><div class="panel-b"><b>Один профиль для продуктов Vertux</b><p class="mut">Имя, пароль и двухэтапная защита меняются в Nexus. Workspace не хранит второй пароль и не создаёт отдельный профиль.</p></div></aside>
+  </div>`;
 
   V.dashboard=()=>{
     const p=DATA.projects;
@@ -1254,7 +1279,7 @@
 
   /* ---------- render ---------- */
   function render(){
-    $('#pageTitle').textContent=(NAV.find(n=>n.id===view)||NAV[0]).label;
+    $('#pageTitle').textContent=view==='profile'?'Профиль':(NAV.find(n=>n.id===view)||NAV[0]).label;
     $('#pageSub').textContent=SUB[view]||'';
     $('#view').innerHTML=(V[view]||V.dashboard)();
     $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.id===view));
@@ -1319,7 +1344,12 @@
     if(view==='shield') wireShield();
     if(view==='trainer') wireTrainer();
     if(view==='team') renderTeam();
-    if(view==='services') void mountServiceModule();
+    if(['subscription','support','access'].includes(view)) void mountServiceModule(view);
+    if(view==='profile'){
+      const edit=$('#profileNexusBtn'); if(edit) edit.onclick=()=>window.VCAuth.openNexus('profile');
+      const products=$('#profileProductsBtn'); if(products) products.onclick=()=>window.VCAuth.openNexus('products');
+      const logout=$('#profileLogoutBtn'); if(logout) logout.onclick=async()=>{ await window.VCAuth.signOut(); location.assign(window.VC.CONFIG.nexusOrigin+'/'); };
+    }
     const nx=$('#nextCallBtn'); if(nx) nx.onclick=nextLead;
     /* удаление записи из журнала звонков */
     $$('button[data-delcall]').forEach(b=>b.onclick=async e=>{
@@ -1371,7 +1401,7 @@
         ${n.id==='dashboard'&&due?`<span class="badge hot">${due}</span>`:''}
       </a>`).join('');
     $('#nav').innerHTML='<div class="nav-sec">агентство</div>'+navItems(visible.filter(n=>!n.service))
-      +'<div class="nav-sec">Vertux Studio</div>'+navItems(visible.filter(n=>n.service));
+      +'<div class="nav-sec">Vertux</div>'+navItems(visible.filter(n=>n.service));
     $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.id));
     $$('[data-raw-badge]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); pFilter='new'; go('projects'); });
   }
@@ -1381,13 +1411,19 @@
     $('#userAva').textContent=initials(USER.name||USER.email||'?');
     $('#userName').textContent=USER.name||USER.email;
     $('#userRole').textContent=USER.role||'';
+    const profile=$('#profileBtn'); if(profile) profile.onclick=()=>go('profile');
+    const switcher=$('#productSwitcher');
+    if(switcher){
+      switcher.hidden=!(window.VCAuth.nexusRequired&&window.VCAuth.nexusRequired());
+      switcher.onclick=()=>window.VCAuth.openNexus('products');
+    }
     const lo=$('#logoutBtn');
     if(window.VCAuth.enabled()){
       lo.hidden=false;
       if(window.VCAuth.nexusManaged&&window.VCAuth.nexusManaged()){
-        lo.title='Вернуться в Nexus';
-        lo.setAttribute('aria-label','Вернуться в Nexus');
-        lo.onclick=()=>window.nexusProduct.close('products');
+        lo.title='Выйти из Vertux';
+        lo.setAttribute('aria-label','Выйти из Vertux');
+        lo.onclick=async()=>{ await window.VCAuth.signOut(); location.assign(window.VC.CONFIG.nexusOrigin+'/'); };
       }else{
         lo.onclick=async()=>{ await window.VCAuth.signOut(); location.reload(); };
       }
@@ -1412,6 +1448,7 @@
     const el=$('#login'); el.hidden=false;
     let mode='login';
     const nameEl=$('#loginName'), codeEl=$('#loginCode'), btn=$('#loginBtn'), toggle=$('#loginToggle'), err=$('#loginErr');
+    err.classList.remove('info');
     if(window.VCAuth.nexusManaged&&window.VCAuth.nexusManaged()){
       $('#loginEmail').hidden=true; $('#loginEmail').required=false;
       $('#loginPass').hidden=true; $('#loginPass').required=false;
@@ -1420,6 +1457,17 @@
       err.textContent=(window.VCAuth.lastError&&window.VCAuth.lastError())||'Nexus не смог выдать сессию Workspace. Закройте окно и повторите запуск продукта.';
       btn.type='button'; btn.textContent='Вернуться в Nexus';
       btn.onclick=()=>window.nexusProduct.close('products');
+      return;
+    }
+    if(window.VCAuth.nexusRequired&&window.VCAuth.nexusRequired()){
+      $('#loginEmail').hidden=true; $('#loginEmail').required=false;
+      $('#loginPass').hidden=true; $('#loginPass').required=false;
+      nameEl.hidden=true; nameEl.required=false; codeEl.hidden=true; codeEl.required=false; toggle.hidden=true;
+      $('.login-sub').textContent='Без отдельного пароля Workspace';
+      err.classList.add('info');
+      err.textContent=(window.VCAuth.lastError&&window.VCAuth.lastError())||'Откройте Vertux Workspace из своего аккаунта Nexus.';
+      btn.type='button'; btn.textContent='Открыть Vertux Nexus';
+      btn.onclick=()=>window.VCAuth.openNexus('products');
       return;
     }
     function applyMode(){

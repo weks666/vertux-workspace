@@ -45,6 +45,8 @@ button{font-family:inherit;cursor:pointer}
 
 .side-foot{border-top:1px solid var(--line);padding:14px}
 .who{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.who-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1;padding:3px;border:0;border-radius:var(--radius-sm);color:inherit;text-align:left;background:transparent}
+.who-main:hover,.who-main:focus-visible{background:var(--panel-2);outline:1px solid var(--line-2)}
 .ava{width:32px;height:32px;border-radius:50%;background:var(--panel-3);color:var(--gold);font-weight:700;display:grid;place-items:center;flex:0 0 auto}
 .who-text{display:flex;flex-direction:column;line-height:1.2;min-width:0}
 .who-name{font-weight:600}.who-role{font-size:12px;color:var(--muted-2)}
@@ -72,6 +74,8 @@ button{font-family:inherit;cursor:pointer}
 .btn.ghost{width:38px;padding:0;justify-content:center;font-size:16px;color:var(--muted)}
 .btn.gold{background:linear-gradient(135deg,var(--gold),#5a3fd6);color:#fff;border:none;font-weight:600}
 .btn.gold:hover{filter:brightness(1.12)}
+.btn.danger-text{color:var(--red)}
+.product-switcher{max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .row-inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
 .view{flex:1;overflow-y:auto;padding:24px;animation:fade .25s ease}
@@ -373,8 +377,39 @@ select:focus{border-color:var(--gold)}
 .login input::placeholder{color:var(--muted-2)}
 .login-btn{height:42px;justify-content:center;margin-top:4px}
 .login-err{font-size:12.5px;color:var(--red);min-height:16px;line-height:1.45}
+.login-err.info{color:var(--muted)}
 .login-toggle{background:none;border:none;color:var(--muted);font-size:12.5px;padding:4px;font-family:inherit}
 .login-toggle:hover{color:var(--gold)}
 .logout-btn{margin-left:auto;width:28px;height:28px;border-radius:7px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted-2);font-size:13px;display:grid;place-items:center;flex:0 0 auto}
 .logout-btn:hover{color:var(--red);border-color:var(--line-2)}
 #app.collapsed .logout-btn{display:none}
+
+/* ---------- Vertux system module / profile ---------- */
+.service-host{
+  --vsc-bg:transparent;
+  --vsc-surface:var(--panel);
+  --vsc-surface-strong:var(--panel-2);
+  --vsc-text:var(--text);
+  --vsc-muted:var(--muted);
+  --vsc-accent:var(--gold);
+  --vsc-success:var(--green);
+  --vsc-warning:var(--amber);
+  --vsc-danger:var(--red);
+  --vsc-border:var(--line);
+  --vsc-radius:var(--radius);
+  --vsc-radius-small:var(--radius-sm);
+  --vsc-font:var(--font);
+  --vsc-shadow:var(--shadow);
+}
+.profile-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:16px;align-items:start}
+.profile-card{padding:22px}
+.profile-identity{display:flex;align-items:center;gap:15px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.profile-avatar{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:var(--panel-3);color:var(--gold);font-size:22px;font-weight:750}
+.profile-identity h2{margin:2px 0 0;font-size:22px}.profile-identity p{margin:3px 0 0;color:var(--muted)}
+.profile-details{display:grid;margin:0}
+.profile-details div{display:flex;justify-content:space-between;gap:18px;padding:13px 0;border-bottom:1px solid var(--line)}
+.profile-details dt{color:var(--muted)}.profile-details dd{margin:0;text-align:right}
+.profile-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}
+.profile-note p{line-height:1.7}
+@media(max-width:900px){.profile-grid{grid-template-columns:1fr}.product-switcher{max-width:170px}}
+@media(max-width:720px){.product-switcher{width:38px;padding:0;justify-content:center;font-size:0}.product-switcher span{font-size:14px}.search{display:none}}

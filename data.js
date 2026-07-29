@@ -3,6 +3,9 @@
  * всё, что показывает приложение, либо лежит в базе, либо честно пишет «нет данных». */
 
 const CONFIG = {
+  productSlug: 'vertux-workspace',
+  nexusOrigin: 'https://nexus.vertux.online',
+  nexusRequired: true,
   supabaseUrl: 'https://vertuxdb.duckdns.org',
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI',
 
@@ -307,15 +310,20 @@ async function hookCall(url, payload){
 const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
 const adminCall=(action,payload)=>hookCall(CONFIG.adminUrl,{ action:action, ...(payload||{}) });
 
-/* 404 у n8n означает, что production webhook не зарегистрирован. Остальные ответы
- * (включая 400 без токена) означают: воркфлоу активен и дошёл до своих ворот. */
 async function hookActive(url){
   if(!url) return false;
   try{
+    let token='';
+    const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
+    if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
     const res=await fetch(url,{
-      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body:JSON.stringify({action:'health',mode:'health'}),
     });
-    return res.status!==404;
+    if(!res.ok) return false;
+    const body=await res.json().catch(()=>null);
+    return !!(body&&(body.ok===true||body.status==='ok'||body.health==='ok'));
   }catch(e){ return false; }
 }
 

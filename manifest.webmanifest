@@ -1,7 +1,7 @@
 {
   "name": "Vertux Workspace",
   "short_name": "Vertux",
-  "description": "Командный центр агентства Vertux — проекты, лиды, команда, Shield",
+  "description": "Командный центр Vertux — проекты, лиды, звонки, финансы и системные сервисы Nexus",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

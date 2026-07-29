@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 2,
+  "product": {
+    "slug": "vertux-workspace",
+    "type": "workspace",
+    "name": "Vertux Workspace",
+    "controlPlane": "vertux-nexus",
+    "dataPlane": "supabase",
+    "primaryWorkspace": true
+  },
+  "identity": {
+    "contract": "nexus-product-scoped/v1",
+    "browserLaunch": "one-time-fragment-ticket",
+    "desktopLaunch": "electron-preload-bridge",
+    "secondPassword": false,
+    "tokensInUrl": false
+  },
+  "navigation": {
+    "productSwitcher": "header",
+    "profile": "user-menu",
+    "systemGroup": [
+      "subscription",
+      "support",
+      "access"
+    ],
+    "usage": "subscription-only-when-measured",
+    "shield": "not-exposed"
+  },
+  "serviceModule": {
+    "package": "vertux-service-center",
+    "contractVersion": 2,
+    "version": "1.2.0",
+    "source": "nexus-control-plane",
+    "system": true,
+    "removable": false,
+    "sections": [
+      "subscription",
+      "support",
+      "access"
+    ],
+    "usage": "measured-only",
+    "rollbackTarget": "1.1.0",
+    "rollback": {
+      "version": "1.1.0"
+    }
+  },
+  "themeContract": {
+    "prefix": "--vsc-",
+    "tokens": [
+      "surface",
+      "surface-strong",
+      "text",
+      "muted",
+      "accent",
+      "success",
+      "warning",
+      "danger",
+      "border",
+      "radius",
+      "radius-small",
+      "font",
+      "shadow"
+    ]
+  }
+}
