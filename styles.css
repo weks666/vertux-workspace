@@ -401,6 +401,18 @@ select:focus{border-color:var(--gold)}
   --vsc-font:var(--font);
   --vsc-shadow:var(--shadow);
 }
+.service-workspace-shell{display:grid;gap:16px;min-width:0}
+.service-context-card{display:flex;align-items:center;gap:15px;min-width:0;padding:18px 20px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(135deg,var(--panel-2),var(--panel));box-shadow:var(--shadow)}
+.service-context-avatar{display:grid;place-items:center;flex:0 0 auto;width:54px;height:54px;border:1px solid color-mix(in srgb,var(--gold) 40%,var(--line));border-radius:16px;color:var(--gold);background:color-mix(in srgb,var(--gold) 11%,var(--panel-3));font-size:20px;font-weight:800}
+.service-context-copy{display:grid;min-width:0;margin-right:auto}.service-context-copy h2{overflow:hidden;margin:2px 0 0;font-size:20px;text-overflow:ellipsis;white-space:nowrap}.service-context-copy p{overflow:hidden;margin:3px 0 0;color:var(--muted);font-size:12.5px;text-overflow:ellipsis;white-space:nowrap}
+.service-eyebrow{color:var(--muted-2);font-size:10px;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+.service-context-meta{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr));gap:10px;margin:0}.service-context-meta div{min-width:0;padding-left:13px;border-left:1px solid var(--line)}.service-context-meta dt{color:var(--muted-2);font-size:10.5px}.service-context-meta dd{overflow:hidden;margin:4px 0 0;color:var(--text);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.service-context-meta i{display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 12%,transparent)}
+.service-module-shell{position:relative;min-width:0;min-height:440px}.service-module-shell.ready{min-height:0}.service-module-shell.failed{min-height:0}
+.service-skeleton{display:grid;gap:12px;min-height:440px;padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow)}
+.service-skeleton-line,.service-skeleton-grid span,.service-skeleton-panel{position:relative;overflow:hidden;border:1px solid var(--line);background:var(--panel-2)}
+.service-skeleton-line{width:34%;height:14px;border-radius:999px}.service-skeleton-line.wide{width:58%;height:20px}.service-skeleton-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.service-skeleton-grid span{height:92px;border-radius:var(--radius-sm)}.service-skeleton-panel{height:230px;border-radius:var(--radius)}
+.service-skeleton-line::after,.service-skeleton-grid span::after,.service-skeleton-panel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.055),transparent);animation:service-skeleton-wave 1.25s ease-in-out infinite}
+@keyframes service-skeleton-wave{to{transform:translateX(100%)}}
 .profile-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:16px;align-items:start}
 .profile-card{padding:22px}
 .profile-identity{display:flex;align-items:center;gap:15px;padding-bottom:18px;border-bottom:1px solid var(--line)}
@@ -411,5 +423,6 @@ select:focus{border-color:var(--gold)}
 .profile-details dt{color:var(--muted)}.profile-details dd{margin:0;text-align:right}
 .profile-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}
 .profile-note p{line-height:1.7}
-@media(max-width:900px){.profile-grid{grid-template-columns:1fr}.product-switcher{max-width:170px}}
-@media(max-width:720px){.product-switcher{width:38px;padding:0;justify-content:center;font-size:0}.product-switcher span{font-size:14px}.search{display:none}}
+@media(max-width:900px){.profile-grid{grid-template-columns:1fr}.product-switcher{max-width:170px}.service-context-card{align-items:flex-start}.service-context-meta{grid-template-columns:1fr}.service-skeleton-grid{grid-template-columns:1fr}.service-skeleton-grid span{height:72px}}
+@media(max-width:720px){.product-switcher{width:38px;padding:0;justify-content:center;font-size:0}.product-switcher span{font-size:14px}.search{display:none}.service-context-card{display:grid;grid-template-columns:auto minmax(0,1fr);padding:16px}.service-context-meta{grid-column:1/-1}.service-context-meta div{padding:10px 0 0;border-top:1px solid var(--line);border-left:0}.service-skeleton{min-height:400px;padding:14px}.service-skeleton-panel{height:190px}}
+@media(prefers-reduced-motion:reduce){.service-skeleton-line::after,.service-skeleton-grid span::after,.service-skeleton-panel::after{animation:none}}
