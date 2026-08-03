@@ -20,11 +20,8 @@
     projects:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',
     calls:'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z',
     import:'M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2',
-    team:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20a6 6 0 0 1 12 0M14 20a6 6 0 0 1 8-5',
-    shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z M9 12l2 2 4-4',
     money:'M12 3v18M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7',
     trainer:'M4 14a8 8 0 0 1 16 0M4 14v3a2 2 0 0 0 2 2h1v-6H4m16 0h-3v6h1a2 2 0 0 0 2-2v-4M14 21h-2',
-    services:'M4 7h16M7 4v6m10-6v6M5 13h14v7H5v-7zm4 3h6',
     subscription:'M5 5h14v14H5V5zm0 5h14M9 15h2',
     support:'M12 21a9 9 0 1 0-9-9v4l3-1v-3a6 6 0 1 1 6 6h-2',
     access:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20a6 6 0 0 1 12 0M14 20a6 6 0 0 1 8-5',
@@ -55,6 +52,7 @@
     access:'сотрудники, роли, приглашения и продукты из Nexus',
     profile:'ваш аккаунт Vertux и безопасность входа',
   };
+  const SERVICE_SECTIONS=new Set(['subscription','support','access']);
 
   const TYPE={ creation:['t-new','с нуля'], redesign:['t-re','редизайн'] };
   /* Воронка продаж. cls — цвет стадии, pr — прогресс. */
@@ -92,11 +90,18 @@
     serviceModulePromise=(async()=>{
       const result=await bridge.config();
       if(!result||result.ok!==true) throw new Error((result&&result.error&&result.error.message)||'Nexus не выдал конфигурацию модуля');
-      const url=new URL(result.data.assetUrl);
-      if(!/^https?:$/.test(url.protocol)||url.pathname!=='/service-module/v1.2/vertux-service-center.js') throw new Error('Nexus вернул недоверенный адрес модуля');
+      const moduleVersion=String(result.data&&result.data.moduleVersion||'');
+      if(moduleVersion!=='1.2.1') throw new Error('Nexus вернул несовместимую версию системного модуля');
+      const canonicalAssetUrl=new URL('/service-module/v1.2.1/vertux-service-center.js',window.VCAuth.nexusOrigin()).href;
+      const assetUrl=window.VC.exactHttpsAssetUrl(
+        canonicalAssetUrl,
+        window.VCAuth.nexusOrigin(),
+        '/service-module/v1.2.1/vertux-service-center.js',
+      );
+      if(!assetUrl) throw new Error('Nexus вернул недоверенный адрес модуля');
       await new Promise((resolve,reject)=>{
         const script=document.createElement('script');
-        script.src=url.href;
+        script.src=assetUrl;
         script.onload=resolve;
         script.onerror=()=>reject(new Error('Не удалось загрузить системный модуль Vertux'));
         document.head.appendChild(script);
@@ -115,7 +120,27 @@
         const module=document.createElement('vertux-service-center');
         module.className='service-host';
         module.setAttribute('section',section||'subscription');
-        mount.replaceChildren(module);
+        module.setAttribute('hide-header','');
+        module.hidden=true;
+        const reveal=()=>{
+          if($('#serviceModuleMount')!==mount) return;
+          const skeleton=mount.querySelector('[data-service-skeleton]');
+          if(skeleton) skeleton.remove();
+          module.hidden=false;
+          mount.classList.add('ready');
+        };
+        module.addEventListener('vertux-service-center-ready',reveal,{once:true});
+        module.addEventListener('vertux-service-center-error',event=>{
+          if($('#serviceModuleMount')!==mount) return;
+          if(event.detail&&event.detail.fatal){
+            module.remove();
+            mount.classList.add('failed');
+            mount.innerHTML=`<div class="hint"><span>↗</span><div><b>Сервисный модуль пока недоступен.</b><br>${esc(event.detail.message||'Не удалось загрузить оформление Vertux')}. Бизнес-разделы Workspace продолжают работать независимо.</div></div>`;
+            return;
+          }
+          reveal();
+        },{once:true});
+        mount.append(module);
       }
     }catch(error){
       if($('#serviceModuleMount')===mount) mount.innerHTML=`<div class="hint"><span>↗</span><div><b>Сервисный модуль пока недоступен в этом режиме.</b><br>${esc(error.message||error)}. Бизнес-разделы Workspace продолжают работать независимо.</div></div>`;
@@ -185,13 +210,29 @@
   /* ---------- views ---------- */
   const V={};
 
-  const serviceView=()=>`<div id="serviceModuleMount"><div class="empty"><div class="e-ic">V</div><div>Подключаю системный модуль Vertux…</div></div></div>`;
+  const serviceView=()=>`<section class="service-workspace-shell">
+    <header class="service-context-card">
+      <div class="service-context-avatar" aria-hidden="true">${esc(initials((USER&&USER.name)||'V'))}</div>
+      <div class="service-context-copy"><span class="service-eyebrow">Аккаунт и обслуживание</span><h2>${esc((USER&&USER.name)||'Пользователь Vertux')}</h2><p>${esc((USER&&USER.role)||'Пользователь')} · Vertux Workspace</p></div>
+      <dl class="service-context-meta">
+        <div><dt>Продукт</dt><dd>Vertux Workspace</dd></div>
+        <div><dt>Вход</dt><dd><i aria-hidden="true"></i>${USER&&USER.nexusManaged?'Защищённая сессия Nexus':'Локальный режим'}</dd></div>
+      </dl>
+    </header>
+    <div class="service-module-shell" id="serviceModuleMount">
+      <div class="service-skeleton" data-service-skeleton role="status" aria-label="Подключаем сервисы Vertux">
+        <span class="service-skeleton-line wide"></span><span class="service-skeleton-line"></span>
+        <div class="service-skeleton-grid"><span></span><span></span><span></span></div>
+        <span class="service-skeleton-panel"></span>
+      </div>
+    </div>
+  </section>`;
   V.subscription=serviceView;
   V.support=serviceView;
   V.access=serviceView;
   V.profile=()=>`<div class="profile-grid">
     <section class="panel profile-card">
-      <div class="profile-identity"><div class="profile-avatar">${initials((USER&&USER.name)||'V')}</div><div><span class="mut">Аккаунт Vertux</span><h2>${esc((USER&&USER.name)||'Пользователь')}</h2><p>${esc((USER&&USER.email)||'')}</p></div></div>
+      <div class="profile-identity"><div class="profile-avatar">${esc(initials((USER&&USER.name)||'V'))}</div><div><span class="mut">Аккаунт Vertux</span><h2>${esc((USER&&USER.name)||'Пользователь')}</h2><p>${esc((USER&&USER.email)||'')}</p></div></div>
       <dl class="profile-details">
         <div><dt>Роль в Workspace</dt><dd>${esc((USER&&USER.role)||'—')}</dd></div>
         <div><dt>Вход</dt><dd>${USER&&USER.nexusManaged?'Через Vertux Nexus':'Локальный режим'}</dd></div>
@@ -253,7 +294,7 @@
           :`<div class="empty"><div class="e-ic">📭</div><div>Звонков пока не было</div></div>`}</div></div>
       <div class="panel"><div class="panel-h"><h3>Недавно трогали</h3></div>
         <div class="panel-b">${recent.length?`<ul class="feed">${recent.map(x=>`
-          <li><div class="fi">${initials(x.company)}</div>
+          <li><div class="fi">${esc(initials(x.company))}</div>
             <div><div>${esc(x.company)} ${stagePill(x)}</div>
             <div class="ft">${esc(ago(x.updated_at))}${x.notes?' · '+esc(String(x.notes).slice(0,40)):''}</div></div></li>`).join('')}</ul>`
           :`<div class="empty"><div class="e-ic">🗂️</div><div>Пока ничего не меняли</div></div>`}</div></div>
@@ -294,9 +335,10 @@
     </tr></thead><tbody>
       ${list.slice(0,300).map(p=>{
         const k=stageOf(p), n=window.VC.callsOf(p).length;
+        const demoUrl=window.VC.safeHttpUrl(p.demo);
         return `<tr data-id="${esc(p.id)}" class="${STAGES[k].cls}">
         <td class="c-co"><div class="co">
-          <div class="logo ${STAGES[k].cls}">${initials(p.company)}</div>
+          <div class="logo ${STAGES[k].cls}">${esc(initials(p.company))}</div>
           <div class="co-t"><span class="cn">${esc(p.company)}</span>
             <span class="csub">${esc(String(p.niche||'—').slice(0,38))}${p.city?' · '+esc(p.city):''}</span></div>
           ${isDue(p)?`<span class="due-badge" title="перезвонить ${fmtDay(nextCallOf(p))}">🔔 ${fmtDay(nextCallOf(p))}</span>`:''}
@@ -308,9 +350,9 @@
           </select>`:stagePill(p)}</td>
         <td class="c-nt">${canEdit?`<input class="note-in" data-note="${esc(p.id)}" value="${esc(p.notes||'')}" placeholder="пара слов…" maxlength="120" />`
           :`<span class="mut">${esc(p.notes||'—')}</span>`}</td>
-        <td class="c-ra">${p.rating?`<span class="rate"><b>${esc(rate(p.rating))}</b>${p.reviews?`<span class="rv">${p.reviews}&nbsp;отз.</span>`:''}</span>`:'<span class="mut">—</span>'}</td>
+        <td class="c-ra">${p.rating?`<span class="rate"><b>${esc(rate(p.rating))}</b>${p.reviews?`<span class="rv">${esc(p.reviews)}&nbsp;отз.</span>`:''}</span>`:'<span class="mut">—</span>'}</td>
         <td class="c-ph">${p.phone?`<button class="mini call" data-call="${esc(p.id)}" title="Набрать ${esc(p.phone)}">📞 ${esc(p.phone)}</button>`:'<span class="mut">нет</span>'}</td>
-        <td class="c-dm">${p.demo?`<a class="mini go" href="${esc(p.demo)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Открыть ↗</a>`
+        <td class="c-dm">${demoUrl?`<a class="mini go" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Открыть ↗</a>`
           :(p.gen_prompt?`<button class="mini make" data-demo="${esc(p.id)}">Создать</button>`
           :`<span class="mut" title="сначала нужен промпт из AI-разбора Rockefeller">Нужен AI-разбор</span>`)}</td>
       </tr>`;}).join('')}
@@ -469,172 +511,6 @@
       :`<div class="panel-b"><div class="empty"><div class="e-ic">💰</div><div>Пока нет сделок в стадиях «согласовано» и «оплачено»</div></div></div>`}
     </div>`;
   };
-
-  V.team=()=>`
-    ${(USER&&USER.can&&USER.can.invite)?`
-    <div class="panel" style="margin-bottom:16px">
-      <div class="panel-h"><h3>Сотрудники</h3><span class="sub">кто в команде, когда заходил, какой уровень</span></div>
-      <div id="teamList"><div class="panel-b"><div class="empty"><div class="e-ic">👥</div><div>загружаю список…</div></div></div></div>
-    </div>`:''}
-    <div class="panel">
-      <div class="panel-h"><h3>Уровни доступа</h3><span class="sub">права проверяются в самой базе, не только в интерфейсе</span></div>
-      <div class="panel-b"><table class="data"><thead><tr>
-        <th>Уровень</th><th>Приглашать</th><th>Редактировать</th><th>Видеть деньги</th>
-      </tr></thead><tbody>
-        ${Object.entries(window.VCAuth.ROLES).map(([k,v])=>`<tr style="cursor:default">
-          <td><b>${esc(v.label)}</b>${USER&&USER.roleKey===k?' <span class="pill s-demo"><i></i>это вы</span>':''}</td>
-          <td>${v.invite?'<span class="ok">да</span>':'<span class="off">нет</span>'}</td>
-          <td>${v.edit?'<span class="ok">да</span>':'<span class="off">нет</span>'}</td>
-          <td>${v.finance?'<span class="ok">да</span>':'<span class="off">нет</span>'}</td>
-        </tr>`).join('')}
-      </tbody></table></div>
-    </div>
-    ${(USER&&USER.can&&USER.can.invite)?`
-    <div class="panel" style="margin-top:16px">
-      <div class="panel-h"><h3>Пригласить в Workspace</h3><span class="sub">одноразовый код — сотрудник регистрируется им сам</span></div>
-      <div class="panel-b">
-        <div class="row-inline">
-          <span class="mut" style="font-size:13px">Уровень нового сотрудника:</span>
-          <select id="inviteRole">${Object.entries(window.VCAuth.ROLES)
-            .filter(([k])=>k!=='owner'||(USER&&USER.can.roles))
-            .map(([k,v])=>`<option value="${k}"${k==='manager'?' selected':''}>${v.label}</option>`).join('')}</select>
-          <button class="btn gold" id="inviteBtn">Создать код</button>
-        </div>
-        <div id="inviteNew" style="margin-top:14px"></div>
-        <div id="inviteOut" style="margin-top:6px"></div>
-      </div>
-    </div>`:`<div class="hint" style="margin-top:16px"><span>🔒</span><div>Приглашать сотрудников может только основатель или администратор.</div></div>`}`;
-
-  async function renderTeam(){
-    const box=$('#teamList'); if(!box) return;
-    if(!window.VC.CONFIG.adminActive){
-      const invites=await window.VCAuth.listInvites().catch(()=>[]);
-      const used=invites.filter(i=>i.used_by&&(!USER||String(i.used_by)!==String(USER.id)));
-      const roleLabel=r=>((window.VCAuth.ROLES[r]||{}).label)||r||'наблюдатель';
-      box.innerHTML=`<div class="table-scroll"><table class="data"><thead><tr>
-        <th>Сотрудник</th><th>Уровень</th><th>Источник</th><th>Активирован</th>
-      </tr></thead><tbody>
-        <tr style="cursor:default"><td><div class="co"><div class="logo s-agr">${initials((USER&&(USER.name||USER.email))||'Я')}</div>
-          <div class="co-t"><span class="cn">${esc((USER&&USER.name)||'Ваш аккаунт')} <span class="pill s-demo"><i></i>это вы</span></span>
-          <span class="csub">${esc((USER&&USER.email)||'')}</span></div></div></td>
-          <td><span class="pill s-agr"><i></i>${esc(roleLabel(USER&&USER.roleKey))}</span></td><td class="mut">основной аккаунт</td><td class="mut">—</td></tr>
-        ${used.map(i=>`<tr style="cursor:default"><td><div class="co"><div class="logo s-cont">${initials(i.note||'Сотрудник')}</div>
-          <div class="co-t"><span class="cn">${esc(i.note||'Сотрудник по приглашению')}</span>
-          <span class="csub">аккаунт ···${esc(String(i.used_by).slice(-6))}</span></div></div></td>
-          <td><span class="pill s-cont"><i></i>${esc(roleLabel(i.role))}</span></td><td class="mut">код ${esc(i.code)}</td>
-          <td class="mut">${esc(String(i.used_at||i.created_at||'').slice(0,10))}</td></tr>`).join('')}
-      </tbody></table></div>
-      <div class="panel-b" style="padding-top:10px"><div class="hint" style="margin:0"><span>🔌</span><div><b>Показан резервный список по использованным приглашениям.</b> Email сотрудников, последний вход и смена роли появятся после импорта и активации <code>n8n/vertux-admin.json</code>.</div></div></div>`;
-      return;
-    }
-    try{
-      const j=await window.VC.adminCall('list_users');
-      const users=j.users||[];
-      const canRoles=!!(USER&&USER.can&&USER.can.roles);
-      box.innerHTML=`<table class="data"><thead><tr>
-        <th>Сотрудник</th><th>Уровень</th><th>Появился</th><th>Был в сети</th>
-      </tr></thead><tbody>${users.map(u=>{
-        const isSelf=USER&&USER.id===u.id, isOwner=u.role==='owner';
-        const label=((window.VCAuth.ROLES[u.role]||{}).label)||u.role;
-        return `<tr style="cursor:default">
-        <td><div class="co"><div class="logo s-cont">${initials(u.name||u.email)}</div>
-          <div class="co-t"><span class="cn">${esc(u.name||'—')}${isSelf?' <span class="pill s-demo"><i></i>это вы</span>':''}</span>
-          <span class="csub">${esc(u.email)}</span></div></div></td>
-        <td>${(canRoles&&!isSelf&&!isOwner)?`<select class="stage-sel s-cont" data-role-user="${esc(u.id)}">
-            ${['admin','manager','viewer'].map(r=>`<option value="${r}"${u.role===r?' selected':''}>${window.VCAuth.ROLES[r].label}</option>`).join('')}
-          </select>`:`<span class="pill ${isOwner?'s-agr':'s-cont'}"><i></i>${esc(label)}</span>`}</td>
-        <td class="mut">${esc(String(u.created_at||'').slice(0,10))}</td>
-        <td class="mut">${u.last_sign_in_at?esc(ago(u.last_sign_in_at)):'ещё не заходил'}</td>
-      </tr>`;}).join('')}</tbody></table>`;
-      $$('select[data-role-user]',box).forEach(s=>{
-        const before=s.value;
-        s.onchange=async()=>{
-          s.disabled=true;
-          try{
-            await window.VC.adminCall('set_role',{ targetId:s.dataset.roleUser, role:s.value });
-            s.classList.remove('s-cont'); s.classList.add('s-paid');
-            setTimeout(()=>{ s.classList.remove('s-paid'); s.classList.add('s-cont'); },1200);
-          }catch(e){ s.value=before; alert('Роль не поменялась: '+(e.message||e)); }
-          finally{ s.disabled=false; }
-        };
-      });
-    }catch(e){
-      box.innerHTML=`<div class="panel-b"><div class="hint" style="margin:0"><span>🔌</span><div>Список сотрудников появится после активации воркфлоу <b>Vertux Admin</b> в n8n (папка <code>n8n/</code> в репо). Сейчас: ${esc(e.message||e)}</div></div></div>`;
-    }
-  }
-
-  async function renderInvites(){
-    const out=$('#inviteOut'); if(!out) return;
-    try{
-      const list=await window.VCAuth.listInvites();
-      out.innerHTML = list.length ? `<table class="data"><thead><tr><th>Код</th><th>Уровень</th><th>Статус</th><th>Создан</th></tr></thead><tbody>${
-        list.map(i=>`<tr style="cursor:default">
-          <td><code>${esc(i.code)}</code></td>
-          <td>${esc(((window.VCAuth.ROLES[i.role]||{}).label)||i.role||'—')}</td>
-          <td>${i.used_by?'<span class="pill s-ni"><i></i>использован</span>':'<span class="pill s-paid"><i></i>свободен</span>'}</td>
-          <td class="mut">${esc(String(i.created_at||'').slice(0,10))}</td></tr>`).join('')}</tbody></table>`
-        : '<span class="mut" style="font-size:13px">Кодов пока нет</span>';
-    }catch(e){ out.innerHTML='<span class="mut" style="font-size:13px">Не удалось загрузить коды</span>'; }
-  }
-
-  /* Мост к серверу (n8n вкл/выкл, баланс OpenRouter). Ключи живут на сервере,
-     фронт ходит со своим Supabase-токеном — функция пускает только owner/admin. */
-  async function bridgeCall(action, payload){
-    const url=window.VC.CONFIG.bridgeUrl;
-    if(!url) throw new Error('мост не настроен');
-    const c=window.VCAuth.client(); if(!c) throw new Error('нет соединения');
-    const { data }=await c.auth.getSession();
-    const token=data&&data.session&&data.session.access_token;
-    const res=await fetch(url,{
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token, 'apikey':window.VC.CONFIG.supabaseAnonKey },
-      body:JSON.stringify({ action:action, ...(payload||{}) }),
-    });
-    const j=await res.json().catch(()=>({}));
-    if(!res.ok||j.error) throw new Error(j.error||('HTTP '+res.status));
-    return j;
-  }
-
-  V.shield=()=>{
-    const layers=['Потолок расхода OpenRouter','Origin + токен сессии','Фильтр длины и фарма','max_tokens + границы темы','Telegram-алерты'];
-    const bridge=!!window.VC.CONFIG.bridgeUrl;
-    return `
-    <div class="hint"><span>🛡️</span><div><b>Vertux Shield</b> — защита AI-виджетов от «токен-фермеров». Каждый виджет закрыт 5 слоями; открытые вебхуки помечены.</div></div>
-    ${bridge?`<div class="panel" style="margin-bottom:16px"><div class="panel-h"><h3>Баланс OpenRouter</h3><span class="sub">общий ключ виджетов</span></div>
-      <div class="panel-b" id="orBal"><span class="mut">загружаю…</span></div></div>`:''}
-    <div class="grid cards">${DATA.widgets.map((w,i)=>`
-      <div class="card"><div class="ch"><div class="member-ava">${initials(w.company)}</div>
-        <div><div style="font-weight:600">${esc(w.company)}</div>
-        <div style="font-size:12.5px" class="${w.shield?'ok':'off'}">${w.shield?'● защита активна':'○ вебхук открыт'}</div></div></div>
-        <div class="mstat"><span class="mut">Заблокировано</span><b class="mut">нет данных</b></div>
-        ${bridge&&w.workflowId?`<div class="row-inline" style="margin:10px 0 2px">
-          <button class="btn" data-wf="${esc(w.workflowId)}" data-do="deactivate">Выключить</button>
-          <button class="btn" data-wf="${esc(w.workflowId)}" data-do="activate">Включить</button>
-          <span class="mut wf-msg" style="font-size:12px"></span>
-        </div>`:''}
-        <div class="dr-sec">Слои</div>
-        ${layers.map(l=>`<div class="shield-line">${l}<span class="st ${w.shield?'ok':'off'}">${w.shield?'вкл':'—'}</span></div>`).join('')}
-      </div>`).join('')}
-    </div>
-    ${bridge?'':`<div class="hint" style="margin-top:16px"><span>🔌</span><div><b>Управление виджетами и баланс OpenRouter не подключены.</b> Кнопки вкл/выкл и остаток на ключе появятся, когда поставим мост — маленькую функцию на твоём Supabase, где ключи лежат на сервере, а не в браузере. Файлы готовы в <code>backend/</code>, ставится при следующем деплое с паролем.</div></div>`}
-    <div class="hint" style="margin-top:16px"><span>📊</span><div>Счётчик блокировок пока не подключён к n8n — поэтому здесь честное «нет данных», а не выдуманная цифра. Подключим, когда выведем ноду Log Messages в базу.</div></div>`;
-  };
-
-  function wireShield(){
-    const bal=$('#orBal');
-    if(bal) bridgeCall('balance').then(j=>{
-      bal.innerHTML=`<div class="mstat" style="border:none;padding:0"><span class="mut">Осталось</span><b>${esc(j.left!=null?('$'+Number(j.left).toFixed(2)):'—')}</b></div>
-        ${j.usage!=null?`<div class="mstat"><span class="mut">Потрачено</span><b>$${esc(Number(j.usage).toFixed(2))}</b></div>`:''}`;
-    }).catch(e=>{ bal.innerHTML='<span class="mut">не достучался: '+esc(e.message||e)+'</span>'; });
-    $$('button[data-wf]').forEach(b=>b.onclick=async()=>{
-      const msg=b.parentElement.querySelector('.wf-msg');
-      b.disabled=true; if(msg) msg.textContent='…';
-      try{ await bridgeCall(b.dataset.do,{workflowId:b.dataset.wf});
-        if(msg) msg.textContent=b.dataset.do==='activate'?'включён ✓':'выключен ✓';
-      }catch(e){ if(msg) msg.textContent='не вышло: '+(e.message||e); }
-      finally{ b.disabled=false; }
-    });
-  }
 
   /* ---------- AI-тренер ---------- */
   const TR={ tab:'live', leadId:'', lines:[], hints:[], auto:true, listening:false,
@@ -1059,6 +935,7 @@
   /* ---------- демки ---------- */
   function openDemoModal(p){
     const m=$('#modal');
+    const currentDemoUrl=window.VC.safeHttpUrl(p.demo);
     m.innerHTML=`<div class="modal-card">
       <button class="dr-close" data-x>✕</button>
       <h3 style="margin:0 0 4px">Демка для «${esc(p.company)}»</h3>
@@ -1074,7 +951,7 @@
       </div></div>
       <div class="step"><span class="sn">3</span><div style="flex:1">
         <b>Вставь ссылку на готовую демку</b>
-        <input id="mLink" placeholder="https://…" value="${esc(p.demo||'')}" style="margin-top:8px" />
+        <input id="mLink" placeholder="https://…" value="${esc(currentDemoUrl)}" style="margin-top:8px" />
         <div class="mut" style="font-size:12px;margin-top:6px">Сохраню ссылку и переведу лида в стадию «демка отправлена».</div>
       </div></div>
       <div class="row-inline" style="margin-top:18px">
@@ -1092,8 +969,8 @@
       }catch(e){ cp.textContent='Не вышло — выдели вручную'; }
     };
     $('#mSave').onclick=async()=>{
-      const link=$('#mLink').value.trim(), msg=$('#mMsg');
-      if(link && !/^https?:\/\//i.test(link)){ msg.textContent='ссылка должна начинаться с http://'; msg.style.color='var(--red)'; return; }
+      const rawLink=$('#mLink').value.trim(), link=rawLink?window.VC.safeHttpUrl(rawLink):'', msg=$('#mMsg');
+      if(rawLink&&!link){ msg.textContent='нужна безопасная ссылка http:// или https:// без логина и пароля'; msg.style.color='var(--red)'; return; }
       msg.style.color=''; msg.textContent='сохраняю…';
       try{
         await window.VC.saveDemo(p.id, link||null);
@@ -1116,9 +993,13 @@
     const calls=window.VC.callsOf(p);
     const last=lastCall(p);
     const pending=PENDING_CALL.get(String(p.id));
+    const siteUrl=window.VC.safeHttpUrl(p.site);
+    const vkUrl=window.VC.safeHttpUrl(p.vk_link);
+    const sourceUrl=window.VC.safeHttpUrl(p.source_url);
+    const demoUrl=window.VC.safeHttpUrl(p.demo);
     $('#drawer').innerHTML=`
-      <div class="dr-head"><button class="dr-close" onclick="VCUI.closeDrawer()">✕</button>
-        <div class="co"><div class="logo ${STAGES[stageOf(p)].cls}" style="width:40px;height:40px">${initials(p.company)}</div>
+      <div class="dr-head"><button class="dr-close" data-drawer-close>✕</button>
+        <div class="co"><div class="logo ${STAGES[stageOf(p)].cls}" style="width:40px;height:40px">${esc(initials(p.company))}</div>
           <div><div style="font-weight:700;font-size:16px">${esc(p.company)}</div>
           <div class="mut" style="font-size:12.5px">${esc(String(p.niche||'').slice(0,52))}${p.city?' · '+esc(p.city):''}</div></div></div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
@@ -1160,9 +1041,9 @@
         <div class="dr-row"><span class="l">Телефон</span><span class="v">${p.phone?`<a class="link" href="tel:${esc(p.phone)}">${esc(p.phone)}</a>`:'—'}</span></div>
         <div class="dr-row"><span class="l">Почта</span><span class="v">${esc(p.email||'—')}</span></div>
         <div class="dr-row"><span class="l">Адрес</span><span class="v">${esc(p.address||'—')}</span></div>
-        <div class="dr-row"><span class="l">Сайт</span><span class="v">${p.site?`<a class="link" href="${esc(p.site)}" target="_blank" rel="noopener">открыть ↗</a>`:'<span class="mut">нет сайта</span>'}</span></div>
-        ${p.vk_link?`<div class="dr-row"><span class="l">ВКонтакте</span><span class="v"><a class="link" href="${esc(p.vk_link)}" target="_blank" rel="noopener">открыть ↗</a></span></div>`:''}
-        ${p.source_url?`<div class="dr-row"><span class="l">2GIS</span><span class="v"><a class="link" href="${esc(p.source_url)}" target="_blank" rel="noopener">карточка ↗</a></span></div>`:''}
+        <div class="dr-row"><span class="l">Сайт</span><span class="v">${siteUrl?`<a class="link" href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer">открыть ↗</a>`:'<span class="mut">нет сайта</span>'}</span></div>
+        ${vkUrl?`<div class="dr-row"><span class="l">ВКонтакте</span><span class="v"><a class="link" href="${esc(vkUrl)}" target="_blank" rel="noopener noreferrer">открыть ↗</a></span></div>`:''}
+        ${sourceUrl?`<div class="dr-row"><span class="l">2GIS</span><span class="v"><a class="link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">карточка ↗</a></span></div>`:''}
 
         ${p.issues?`<div class="dr-sec">Болячки сайта — зацепка для звонка</div>
           <div class="hint" style="margin:0"><span>⚠️</span><div>${esc(p.issues)}</div></div>`:''}
@@ -1184,14 +1065,16 @@
               ${canEdit?`<button class="mini del" data-drdel="${esc(c.at)}" title="убрать запись">✕</button>`:''}</li>`).join('')}</ul>`:''}
 
         <div class="dr-actions">
-          ${p.site?`<a class="btn" href="${esc(p.site)}" target="_blank" rel="noopener">Сайт ↗</a>`:''}
-          ${p.demo?`<a class="btn" href="${esc(p.demo)}" target="_blank" rel="noopener">Демо ↗</a>`:''}
+          ${siteUrl?`<a class="btn" href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer">Сайт ↗</a>`:''}
+          ${demoUrl?`<a class="btn" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Демо ↗</a>`:''}
           ${canEdit&&p.gen_prompt?`<button class="btn gold" id="demoBtn">${p.demo?'Заменить демку':'Сделать демку'}</button>`:''}
           ${canEdit?`<button class="btn" id="aiReviewBtn">🧾 ИИ-разбор звонка</button>`:''}
         </div>
       </div>`;
     $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
     $('#drawerScrim').classList.add('open');
+    const closeButton=$('[data-drawer-close]',$('#drawer'));
+    if(closeButton) closeButton.onclick=closeDrawer;
 
     const sel=$('#stageSel');
     if(sel) sel.onchange=()=>changeStage(p, sel.value, sel, $('#stageMsg'));
@@ -1278,11 +1161,15 @@
   }
 
   /* ---------- render ---------- */
-  function render(){
+  function renderViewChrome(){
     $('#pageTitle').textContent=view==='profile'?'Профиль':(NAV.find(n=>n.id===view)||NAV[0]).label;
     $('#pageSub').textContent=SUB[view]||'';
-    $('#view').innerHTML=(V[view]||V.dashboard)();
     $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.id===view));
+  }
+
+  function render(){
+    renderViewChrome();
+    $('#view').innerHTML=(V[view]||V.dashboard)();
 
     $$('tr[data-id]').forEach(tr=>tr.onclick=e=>{
       if(e.target.closest('button,select,input,a')) return;
@@ -1341,14 +1228,12 @@
     wireMoney('data-pct',(m,v)=>({...m,percent:v==null?window.VC.CONFIG.managerPercent:Math.min(100,Math.max(0,v))}));
 
     if(view==='import') wireImport();
-    if(view==='shield') wireShield();
     if(view==='trainer') wireTrainer();
-    if(view==='team') renderTeam();
-    if(['subscription','support','access'].includes(view)) void mountServiceModule(view);
+    if(SERVICE_SECTIONS.has(view)) void mountServiceModule(view);
     if(view==='profile'){
       const edit=$('#profileNexusBtn'); if(edit) edit.onclick=()=>window.VCAuth.openNexus('profile');
       const products=$('#profileProductsBtn'); if(products) products.onclick=()=>window.VCAuth.openNexus('products');
-      const logout=$('#profileLogoutBtn'); if(logout) logout.onclick=async()=>{ await window.VCAuth.signOut(); location.assign(window.VC.CONFIG.nexusOrigin+'/'); };
+      const logout=$('#profileLogoutBtn'); if(logout) logout.onclick=()=>signOutSafely('nexus');
     }
     const nx=$('#nextCallBtn'); if(nx) nx.onclick=nextLead;
     /* удаление записи из журнала звонков */
@@ -1358,23 +1243,21 @@
       try{ if(await deleteCall(id,at)) render(); }
       catch(err){ alert('Не удалилось: '+(err.message||err)); }
     });
-
-    const ib=$('#inviteBtn');
-    if(ib){
-      renderInvites();
-      ib.onclick=async()=>{
-        const t=ib.textContent; ib.disabled=true; ib.textContent='Создаю…';
-        try{
-          const roleSel=$('#inviteRole');
-          const code=await window.VCAuth.createInvite(roleSel?roleSel.value:'manager');
-          $('#inviteNew').innerHTML=`<div class="hint" style="margin:0"><span>🔑</span><div>Новый код: <code style="font-size:15px">${esc(code)}</code><br><span class="mut">Отдайте его сотруднику — он введёт его при регистрации. Код одноразовый.</span></div></div>`;
-          renderInvites();
-        }catch(e){ $('#inviteNew').innerHTML=`<span style="color:var(--red);font-size:13px">${esc(window.VCAuth.humanError(e))}</span>`; }
-        finally{ ib.disabled=false; ib.textContent=t; }
-      };
-    }
   }
-  function go(id){ view=id; if(view!=='projects') q=''; render(); }
+  function go(id){
+    const previous=view;
+    view=id;
+    if(view!=='projects') q='';
+    if(SERVICE_SECTIONS.has(previous)&&SERVICE_SECTIONS.has(view)){
+      const module=$('#serviceModuleMount vertux-service-center');
+      if(module){
+        renderViewChrome();
+        module.setAttribute('section',view);
+        return;
+      }
+    }
+    render();
+  }
 
   /* Режим обзвона: кому звонить прямо сейчас. Приоритет:
      просроченные напоминания → новые со скриптом (рейтинг выше — раньше) → новые → «связались». */
@@ -1406,6 +1289,16 @@
     $$('[data-raw-badge]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); pFilter='new'; go('projects'); });
   }
 
+  async function signOutSafely(destination){
+    try{
+      await window.VCAuth.signOut();
+      if(destination==='reload') location.reload();
+      else location.assign(window.VC.CONFIG.nexusOrigin+'/');
+    }catch(error){
+      alert('Не удалось безопасно выйти из Vertux: '+(error.message||error));
+    }
+  }
+
   function renderUser(){
     if(!USER) return;
     $('#userAva').textContent=initials(USER.name||USER.email||'?');
@@ -1423,9 +1316,9 @@
       if(window.VCAuth.nexusManaged&&window.VCAuth.nexusManaged()){
         lo.title='Выйти из Vertux';
         lo.setAttribute('aria-label','Выйти из Vertux');
-        lo.onclick=async()=>{ await window.VCAuth.signOut(); location.assign(window.VC.CONFIG.nexusOrigin+'/'); };
+        lo.onclick=()=>signOutSafely('nexus');
       }else{
-        lo.onclick=async()=>{ await window.VCAuth.signOut(); location.reload(); };
+        lo.onclick=()=>signOutSafely('reload');
       }
     }
   }
@@ -1502,6 +1395,8 @@
     await start(user);
   }
 
-  window.VCUI={ closeDrawer, closeModal };
   document.addEventListener('DOMContentLoaded', boot);
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+  }
 })();

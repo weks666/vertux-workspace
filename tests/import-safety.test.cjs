@@ -37,6 +37,7 @@ const context = vm.createContext({
   window,
   localStorage,
   console,
+  URL,
   fetch: async () => ({ status: 404, ok: false, json: async () => ({}) }),
 });
 const source = fs.readFileSync(path.join(__dirname, '..', 'data.js'), 'utf8');
@@ -53,6 +54,44 @@ const makeFile = (name, content) => ({
 });
 
 (async () => {
+  assert.equal(VC.safeHttpUrl('https://example.test/a'), 'https://example.test/a');
+  assert.equal(VC.safeHttpUrl('http://localhost:3000/'), 'http://localhost:3000/');
+  for (const value of [
+    'javascript:alert(1)',
+    'data:text/html,test',
+    'blob:https://example.test/id',
+    '//example.test/path',
+    '/relative',
+    'https://user:password@example.test/',
+    'https://example.test/\nunsafe',
+  ]) {
+    assert.equal(VC.safeHttpUrl(value), '', `unsafe URL must be rejected: ${value.split(':')[0]}`);
+  }
+  assert.equal(VC.safeHttpsUrl('http://example.test/'), '');
+  assert.equal(
+    VC.exactHttpsAssetUrl(
+      'https://nexus.vertux.online/service-module/v1.2/vertux-service-center.js',
+      'https://nexus.vertux.online',
+      '/service-module/v1.2/vertux-service-center.js',
+    ),
+    'https://nexus.vertux.online/service-module/v1.2/vertux-service-center.js',
+  );
+  for (const value of [
+    'https://evil.test/service-module/v1.2/vertux-service-center.js',
+    'https://nexus.vertux.online/service-module/v1.2/vertux-service-center.js?next=evil',
+    'https://nexus.vertux.online/service-module/v1.2/vertux-service-center.js#evil',
+    'http://nexus.vertux.online/service-module/v1.2/vertux-service-center.js',
+  ]) {
+    assert.equal(
+      VC.exactHttpsAssetUrl(
+        value,
+        'https://nexus.vertux.online',
+        '/service-module/v1.2/vertux-service-center.js',
+      ),
+      '',
+    );
+  }
+
   const csv = 'Company,Phone,Call_Script,Antigravity_Prompt,Type\nAcme,+70000000000,Script,Prompt,creation\n';
   const file = makeFile('rockefeller.csv', csv);
   const hash = await VC.fileFingerprint(file);

@@ -1,3 +1,6 @@
 deploy.py
 backend/
 _preview.html
+deploy/*.tar.gz
+deploy/*.tmp
+deploy/.workspace-stage-*

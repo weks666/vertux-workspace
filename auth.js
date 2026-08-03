@@ -7,15 +7,14 @@
   let nexusBootstrapPromise = null;
   let nexusGuardTimer = null;
   let lastNexusError = '';
-  const BROWSER_SESSION_KEY = 'vertux_nexus_product_session_v1';
   let pendingBrowserLaunch = null;
-  let browserSession = readBrowserSession();
+  let browserSession = null;
 
   function nexusOrigin() {
     const value = String(window.VC?.CONFIG?.nexusOrigin || 'https://nexus.vertux.online').replace(/\/+$/u, '');
     try {
       const url = new URL(value);
-      return url.protocol === 'https:' && url.username === '' && url.password === ''
+      return url.origin === 'https://nexus.vertux.online' && url.username === '' && url.password === ''
         ? url.origin
         : 'https://nexus.vertux.online';
     } catch (_) {
@@ -27,36 +26,32 @@
     return window.VC?.CONFIG?.nexusRequired === true;
   }
 
-  function readBrowserSession() {
+  function productBridgeOrigin() {
+    const value = String(window.VC?.CONFIG?.productBridgeOrigin || '').replace(/\/+$/u, '');
     try {
-      const value = JSON.parse(sessionStorage.getItem(BROWSER_SESSION_KEY) || 'null');
-      if (!value || typeof value.token !== 'string' || typeof value.productId !== 'string'
-        || new Date(value.expiresAt).getTime() <= Date.now()) {
-        sessionStorage.removeItem(BROWSER_SESSION_KEY);
-        return null;
-      }
-      return value;
+      const url = new URL(value);
+      return url.origin === 'https://workspace.vertux.online' && url.username === '' && url.password === ''
+        ? url.origin
+        : '';
     } catch (_) {
-      return null;
+      return '';
     }
+  }
+
+  function sameOriginProductSession() {
+    return productBridgeOrigin() !== '' && location.origin === productBridgeOrigin();
+  }
+
+  function productApiOrigin() {
+    return sameOriginProductSession() ? productBridgeOrigin() : nexusOrigin();
   }
 
   function saveBrowserSession(value) {
     browserSession = value;
-    try {
-      sessionStorage.setItem(BROWSER_SESSION_KEY, JSON.stringify(value));
-    } catch (_) {
-      // В приватном режиме сессия всё равно останется в памяти текущей вкладки.
-    }
   }
 
   function clearBrowserSession() {
     browserSession = null;
-    try {
-      sessionStorage.removeItem(BROWSER_SESSION_KEY);
-    } catch (_) {
-      // Нет доступного sessionStorage.
-    }
   }
 
   function takeBrowserLaunch() {
@@ -80,20 +75,21 @@
 
   async function productRequest(path, options) {
     const session = browserSession;
-    if (!session?.token) {
+    const cookieTransport = sameOriginProductSession();
+    if (!cookieTransport && !session?.token) {
       return { ok: false, status: 401, error: { code: 'PRODUCT_SESSION_REQUIRED', message: 'Откройте Workspace из Vertux Nexus' } };
     }
     const initOptions = options || {};
-    const response = await fetch(nexusOrigin() + path, {
+    const response = await fetch(productApiOrigin() + path, {
       method: initOptions.method || 'GET',
       headers: {
         Accept: 'application/json',
-        Authorization: 'Bearer ' + session.token,
+        ...(session?.token ? { Authorization: 'Bearer ' + session.token } : {}),
         ...(initOptions.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: initOptions.body === undefined ? undefined : JSON.stringify(initOptions.body),
-      credentials: 'omit',
-      mode: 'cors',
+      credentials: cookieTransport ? 'same-origin' : 'omit',
+      mode: cookieTransport ? 'same-origin' : 'cors',
       cache: 'no-store',
     });
     const payload = await response.json().catch(function () {
@@ -111,12 +107,13 @@
     }
     const launch = pendingBrowserLaunch;
     pendingBrowserLaunch = null;
-    const response = await fetch(nexusOrigin() + '/api/product-launch/exchange', {
+    const cookieTransport = sameOriginProductSession();
+    const response = await fetch(productApiOrigin() + '/api/product-launch/exchange', {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticket: launch.ticket, productId: launch.productId }),
-      credentials: 'omit',
-      mode: 'cors',
+      credentials: cookieTransport ? 'same-origin' : 'omit',
+      mode: cookieTransport ? 'same-origin' : 'cors',
       cache: 'no-store',
     });
     const payload = await response.json().catch(function () {
@@ -126,11 +123,13 @@
       throw bridgeError(payload, 'Ссылка запуска истекла. Откройте Workspace из Nexus снова.');
     }
     const data = payload.data || {};
-    if (!data.productSessionToken || !data.productSessionExpiresAt) {
+    const httpOnlySession = cookieTransport && data.productSessionTransport === 'http-only-cookie';
+    if ((!httpOnlySession && !data.productSessionToken) || !data.productSessionExpiresAt) {
       throw new Error('Nexus не выдал product-scoped сессию');
     }
     saveBrowserSession({
-      token: String(data.productSessionToken),
+      token: data.productSessionToken ? String(data.productSessionToken) : '',
+      transport: httpOnlySession ? 'http-only-cookie' : 'bearer-memory',
       expiresAt: String(data.productSessionExpiresAt),
       productId: String(data.productId),
       organizationId: String(data.organizationId),
@@ -141,7 +140,7 @@
   }
 
   function installBrowserBridge() {
-    if (window.nexusProduct || (!pendingBrowserLaunch && !browserSession)) return;
+    if (window.nexusProduct || (!sameOriginProductSession() && !pendingBrowserLaunch && !browserSession)) return;
     const service = Object.freeze({
       config: function () { return productRequest('/api/product-session/service-config'); },
       overview: function () { return productRequest('/api/product-session/service-center'); },
@@ -150,9 +149,11 @@
         return productRequest('/api/product-session/support/' + encodeURIComponent(String(ticketId || '')) + '/messages');
       },
       replyTicket: function (value) {
+        const body = { message: value?.message || '' };
+        if (value?.requestId) body.requestId = value.requestId;
         return productRequest('/api/product-session/support/' + encodeURIComponent(String(value?.ticketId || '')) + '/messages', {
           method: 'POST',
-          body: { message: value?.message || '' },
+          body,
         });
       },
       invite: function (value) { return productRequest('/api/product-session/invitations', { method: 'POST', body: value || {} }); },
@@ -186,11 +187,14 @@
         return Promise.resolve({ closed: true, view: target });
       },
       logout: async function () {
-        const result = browserSession
-          ? await productRequest('/api/product-session/logout', { method: 'POST', body: {} }).catch(function () { return null; })
-          : null;
+        if (!(browserSession || sameOriginProductSession())) {
+          clearBrowserSession();
+          return { ok: true, data: { loggedOut: true } };
+        }
+        const result = await productRequest('/api/product-session/logout', { method: 'POST', body: {} });
+        if (!result?.ok) throw bridgeError(result, 'Nexus не подтвердил безопасный выход');
         clearBrowserSession();
-        return result || { ok: true, data: { loggedOut: true } };
+        return result;
       },
       copyText: async function (text) {
         try {
@@ -274,12 +278,25 @@
       const existingUserId = existing.data && existing.data.session && existing.data.session.user
         ? String(existing.data.session.user.id || '')
         : '';
-      const status = await bridge.status();
-      if (status && status.ok === true && status.data.active === true
-        && status.data.externalSubject && status.data.externalSubject === existingUserId) {
-        lastNexusError = '';
-        startNexusGuard();
-        return existing.data.session;
+      if (!pendingBrowserLaunch) {
+        const status = await bridge.status();
+        if (status && status.ok === true && status.data) {
+          saveBrowserSession({
+            token: browserSession?.token || '',
+            transport: status.data.productSessionTransport || browserSession?.transport || 'http-only-cookie',
+            expiresAt: status.data.productSessionExpiresAt || browserSession?.expiresAt || '',
+            productId: String(status.data.productId || ''),
+            organizationId: String(status.data.organizationId || ''),
+            user: status.data.user || browserSession?.user || null,
+            serviceModule: browserSession?.serviceModule || null,
+          });
+        }
+        if (status && status.ok === true && status.data.active === true
+          && status.data.externalSubject && status.data.externalSubject === existingUserId) {
+          lastNexusError = '';
+          startNexusGuard();
+          return existing.data.session;
+        }
       }
 
       const result = await bridge.bootstrap();
@@ -369,34 +386,11 @@
     return data;
   }
 
-  /* Генерация одноразового кода приглашения (только для залогиненных — защищено RLS) */
-  async function createInvite(role, note) {
-    const c = init();
-    if (!c) throw new Error('Вход не настроен');
-    const { data: u } = await c.auth.getUser();
-    if (!u || !u.user) throw new Error('Нужно войти');
-    const r = ROLES[role] ? role : 'manager';
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const code = 'VRTX-' + Array.from(crypto.getRandomValues(new Uint8Array(8)))
-      .map(function (b) { return alphabet[b % alphabet.length]; }).join('');
-    const { error } = await c.from('invite_codes').insert({ code: code, created_by: u.user.id, role: r, note: note || null });
-    if (error) throw error;
-    return code;
-  }
-
-  async function listInvites() {
-    const c = init();
-    if (!c) return [];
-    const { data } = await c.from('invite_codes')
-      .select('code, created_at, used_by, used_at, note, role')
-      .order('created_at', { ascending: false }).limit(20);
-    return data || [];
-  }
-
   async function signOut() {
     if (!enabled()) return;
     if (nexusManaged() && typeof window.nexusProduct?.logout === 'function') {
-      await window.nexusProduct.logout().catch(function () {});
+      const result = await window.nexusProduct.logout();
+      if (result?.ok === false) throw bridgeError(result, 'Nexus не подтвердил безопасный выход');
     }
     await init().auth.signOut({ scope: 'local' });
     clearBrowserSession();
@@ -446,9 +440,9 @@
   window.VCAuth = {
     ROLES: ROLES, client: init,
     enabled: enabled, currentUser: currentUser, signIn: signIn,
-    signUpWithCode: signUpWithCode, createInvite: createInvite, listInvites: listInvites,
+    signUpWithCode: signUpWithCode,
     signOut: signOut, humanError: humanError,
     nexusManaged: nexusManaged, nexusRequired: nexusRequired, lastError: lastError,
-    openNexus: openNexus, sessionContext: sessionContext,
+    nexusOrigin: nexusOrigin, openNexus: openNexus, sessionContext: sessionContext,
   };
 })();
