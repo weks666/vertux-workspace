@@ -2,6 +2,7 @@
 <html lang="ru" data-theme="dark">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self' https://nexus.vertux.online; style-src 'self' 'unsafe-inline' https://nexus.vertux.online; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://nexus.vertux.online https://vertuxdb.duckdns.org wss://vertuxdb.duckdns.org https://zxcqweksn8n.duckdns.org; worker-src 'self'; manifest-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vertux Workspace</title>
   <link rel="manifest" href="manifest.webmanifest" />
@@ -84,6 +85,5 @@
   <script src="data.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>
-  <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(function(){});}</script>
 </body>
 </html>
