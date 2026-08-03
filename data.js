@@ -5,33 +5,45 @@
 const CONFIG = {
   productSlug: 'vertux-workspace',
   nexusOrigin: 'https://nexus.vertux.online',
+  productBridgeOrigin: 'https://workspace.vertux.online',
   nexusRequired: true,
   supabaseUrl: 'https://vertuxdb.duckdns.org',
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI',
 
-  // Мост к n8n и OpenRouter (вкл/выкл виджетов, баланс ключа).
-  // Пусто → кнопки управления скрыты. Заполняется после деплоя
-  // edge-функции widget-bridge (см. backend/README.md).
-  bridgeUrl: '',
-
-  // n8n остаётся мостом для AI-тренера и управления командой.
+  // n8n остаётся мостом для AI-тренера.
   // Rockefeller не заменяем собственной n8n-цепочкой: готовый файл импортируется ниже,
   // а автоматизация будет выполняться локальным браузерным мостом с отдельным профилем.
   aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
-  adminUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-admin',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
 };
 
-/* Наши собственные виджеты — для раздела Shield.
- * Метрики (сколько заблокировано, последний алерт) пока не подключены к n8n,
- * поэтому их здесь нет: лучше «нет данных», чем выдуманное число. */
-const WIDGETS = [
-  // workflowId — id воркфлоу в n8n; нужен мосту, чтобы включать/выключать виджет.
-  { company:'Vertux (портфолио)', site:'https://vertux.online', niche:'Своё агентство', server:'vpn8n', shield:true,  state:'live', workflowId:'' },
-  { company:'КовроСити',          site:'https://kovrocity.ru',  niche:'Химчистка ковров', server:'vpn8n', shield:false, state:'work', workflowId:'' },
-];
+function safeHttpUrl(value){
+  const raw=String(value==null?'':value).trim();
+  if(!raw||raw.length>2048||/[\u0000-\u001F\u007F]/u.test(raw)) return '';
+  try{
+    const url=new URL(raw);
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password) return '';
+    return url.href;
+  }catch(_){ return ''; }
+}
+
+function safeHttpsUrl(value){
+  const href=safeHttpUrl(value);
+  return href&&new URL(href).protocol==='https:'?href:'';
+}
+
+function exactHttpsAssetUrl(value,expectedOrigin,expectedPath){
+  const href=safeHttpsUrl(value);
+  if(!href) return '';
+  const url=new URL(href);
+  return url.origin===expectedOrigin
+    &&url.pathname===expectedPath
+    &&!url.search
+    &&!url.hash
+    ?url.href:'';
+}
 
 /* ---------- Разбор CSV / XLSX ---------- */
 function sniffDelim(line){
@@ -291,13 +303,14 @@ async function runImport(plan, mode, onProgress, meta){
 
 /* ---------- Вебхуки n8n (ключи и SQL живут на сервере, не в браузере) ---------- */
 async function hookCall(url, payload){
-  if(!url) throw new Error('не настроено');
+  const endpoint=safeHttpsUrl(url);
+  if(!endpoint) throw new Error('не настроено');
   let token='';
   try{
     const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
     if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
   }catch(e){}
-  const res=await fetch(url,{
+  const res=await fetch(endpoint,{
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
     body:JSON.stringify(payload||{}),
@@ -308,15 +321,15 @@ async function hookCall(url, payload){
   return j;
 }
 const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
-const adminCall=(action,payload)=>hookCall(CONFIG.adminUrl,{ action:action, ...(payload||{}) });
 
 async function hookActive(url){
-  if(!url) return false;
+  const endpoint=safeHttpsUrl(url);
+  if(!endpoint) return false;
   try{
     let token='';
     const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
     if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
-    const res=await fetch(url,{
+    const res=await fetch(endpoint,{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
       body:JSON.stringify({action:'health',mode:'health'}),
@@ -328,18 +341,16 @@ async function hookActive(url){
 }
 
 async function loadData(){
-  const [projects,aiActive,adminActive]=await Promise.all([
-    loadProjects(), hookActive(CONFIG.aiUrl), hookActive(CONFIG.adminUrl),
-  ]);
+  const [projects,aiActive]=await Promise.all([loadProjects(),hookActive(CONFIG.aiUrl)]);
   CONFIG.aiActive=aiActive;
-  CONFIG.adminActive=adminActive;
-  return { projects:projects||[], widgets:WIDGETS, _source:projects?'db':'offline' };
+  return { projects:projects||[], _source:projects?'db':'offline' };
 }
 
 window.VC = {
   CONFIG, loadData, loadProjects,
+  safeHttpUrl, safeHttpsUrl, exactHttpsAssetUrl,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw,
-  logCall, callsOf, aiCall, adminCall,
+  logCall, callsOf, aiCall,
   readFileRows, fileFingerprint, findImported, rememberImport,
   detectFormat, mapRows, planImport, runImport,
   FORMATS,
