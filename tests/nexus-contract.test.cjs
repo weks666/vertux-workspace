@@ -52,6 +52,10 @@ assert.match(app, /navigator\.serviceWorker\.register\('sw\.js'\)/);
 
 assert.match(data, /nexusRequired:\s*true/);
 assert.match(data, /productBridgeOrigin:\s*'https:\/\/workspace\.vertux\.online'/);
+assert.match(data, /aiShieldAuthority:\s*false/);
+assert.match(data, /const AI_SHIELD_AUTHORIZED=CONFIG\.aiShieldAuthority===true/);
+assert.match(data, /if\(!AI_SHIELD_AUTHORIZED\) throw new Error\('AI-тренер отключён до подтверждения Vertux Shield'\)/);
+assert.match(data, /AI_SHIELD_AUTHORIZED\?hookActive\(CONFIG\.aiUrl\):Promise\.resolve\(false\)/);
 assert.match(data, /function safeHttpUrl\(/);
 assert.match(data, /function exactHttpsAssetUrl\(/);
 assert.doesNotMatch(data, /\bWIDGETS\b|adminUrl|bridgeUrl|adminCall|adminActive/);
@@ -74,6 +78,12 @@ assert.match(auth, /if \(value\?\.requestId\) body\.requestId = value\.requestId
 assert.doesNotMatch(auth, /nexusProduct\?\.logout\(\)\.catch|nexusProduct\.logout\(\)\.catch/);
 assert.match(auth, /Nexus не подтвердил безопасный выход/);
 assert.match(app, /async function signOutSafely\(destination\)/);
+assert.match(app, /AI-функции тренера отключены до production-проверки Vertux Shield/);
+assert.match(app, /Live-транскрипция работает без них/);
+assert.doesNotMatch(app, /Workspace увидит его автоматически/);
+assert.match(app, /const sttOn=\(\)=>!!\(window\.SpeechRecognition\|\|window\.webkitSpeechRecognition\)/);
+assert.match(app, /function trStartSTT\(\)/);
+assert.match(app, /id="trMic" \$\{sttOn\(\)\?'':'disabled'\}/);
 
 assert.match(html, /id="profileBtn"/);
 assert.match(html, /id="productSwitcher"/);
@@ -158,7 +168,69 @@ async function browserBridgeExchangeOrigin(pageOrigin) {
   return requests[0];
 }
 
+function aiShieldContext(source) {
+  const requests = [];
+  const context = {
+    URL,
+    Promise,
+    Object,
+    Array,
+    String,
+    RegExp,
+    JSON,
+    Error,
+    Map,
+    Date,
+    Uint8Array,
+    parseFloat,
+    parseInt,
+    isFinite,
+    localStorage: {
+      getItem() { return null; },
+      setItem() {},
+    },
+    console: { warn() {} },
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { ok: true, status: 'ok' }; },
+      };
+    },
+  };
+  context.window = {
+    VCAuth: { client() { return null; } },
+  };
+  vm.runInNewContext(source, context, { filename: 'data.js' });
+  return { context, requests };
+}
+
+async function verifyAiShieldGate() {
+  assert.equal((data.match(/aiShieldAuthority:\s*false/g) || []).length, 1);
+  const disabled = aiShieldContext(data);
+  assert.equal(disabled.context.window.VC.CONFIG.aiShieldAuthority, false);
+  await disabled.context.window.VC.loadData();
+  assert.equal(disabled.context.window.VC.CONFIG.aiActive, false);
+  assert.equal(disabled.requests.length, 0, 'disabled AI must not probe the webhook');
+
+  disabled.context.window.VC.CONFIG.aiShieldAuthority = true;
+  await disabled.context.window.VC.loadData();
+  await assert.rejects(
+    disabled.context.window.VC.aiCall('suffler', { transcript: 'test transcript' }),
+    /Vertux Shield/,
+  );
+  assert.equal(disabled.requests.length, 0, 'runtime CONFIG mutation must not enable the webhook');
+
+  const reviewedSource = data.replace('aiShieldAuthority: false', 'aiShieldAuthority: true');
+  const reviewed = aiShieldContext(reviewedSource);
+  await reviewed.context.window.VC.loadData();
+  assert.equal(reviewed.context.window.VC.CONFIG.aiActive, true);
+  assert.equal(reviewed.requests.length, 1, 'tracked reviewed authority may probe the webhook');
+}
+
 (async () => {
+  await verifyAiShieldGate();
   const legacyRequest = await browserBridgeExchangeOrigin('https://weks666.github.io');
   assert.equal(legacyRequest.url, 'https://nexus.vertux.online/api/product-launch/exchange');
   assert.equal(legacyRequest.options.credentials, 'omit');

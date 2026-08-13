@@ -542,7 +542,7 @@
       <div class="tbl-tools">
         ${tabs.map(([k,l])=>`<button class="chip ${TR.tab===k?'active':''}" data-ttab="${k}">${l}</button>`).join('')}
       </div>
-      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>Мозг тренера подготовлен, но production webhook n8n пока не активирован.</b> Live-транскрипция работает без него. Для подсказок, разбора и тренажёра импортируй <code>n8n/vertux-ai-trainer.json</code>, выбери кредензию OpenRouter и нажми Activate. Workspace увидит его автоматически при следующем входе.</div></div>`}`;
+      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>AI-функции тренера отключены до production-проверки Vertux Shield.</b> Live-транскрипция работает без них. Подсказки, разбор и тренажёр включаются отдельным проверенным релизом; одного активного webhook n8n недостаточно.</div></div>`}`;
 
     if(TR.tab==='live') return head+`
       ${sttOn()?'':'<div class="hint"><span>⚠️</span><div>Этот браузер не умеет распознавать речь — нужен Chrome или Edge.</div></div>'}

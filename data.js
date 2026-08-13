@@ -13,11 +13,17 @@ const CONFIG = {
   // n8n остаётся мостом для AI-тренера.
   // Rockefeller не заменяем собственной n8n-цепочкой: готовый файл импортируется ниже,
   // а автоматизация будет выполняться локальным браузерным мостом с отдельным профилем.
+  // Включать только отдельным review-коммитом после production gate Vertux Shield.
+  aiShieldAuthority: false,
   aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
 };
+
+// Снимаем tracked authority один раз при загрузке: подмена публичного CONFIG в
+// DevTools или другим runtime-кодом не должна включать непроверенный webhook.
+const AI_SHIELD_AUTHORIZED=CONFIG.aiShieldAuthority===true;
 
 function safeHttpUrl(value){
   const raw=String(value==null?'':value).trim();
@@ -303,6 +309,7 @@ async function runImport(plan, mode, onProgress, meta){
 
 /* ---------- Вебхуки n8n (ключи и SQL живут на сервере, не в браузере) ---------- */
 async function hookCall(url, payload){
+  if(!AI_SHIELD_AUTHORIZED) throw new Error('AI-тренер отключён до подтверждения Vertux Shield');
   const endpoint=safeHttpsUrl(url);
   if(!endpoint) throw new Error('не настроено');
   let token='';
@@ -323,6 +330,7 @@ async function hookCall(url, payload){
 const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
 
 async function hookActive(url){
+  if(!AI_SHIELD_AUTHORIZED) return false;
   const endpoint=safeHttpsUrl(url);
   if(!endpoint) return false;
   try{
@@ -341,7 +349,10 @@ async function hookActive(url){
 }
 
 async function loadData(){
-  const [projects,aiActive]=await Promise.all([loadProjects(),hookActive(CONFIG.aiUrl)]);
+  const [projects,aiActive]=await Promise.all([
+    loadProjects(),
+    AI_SHIELD_AUTHORIZED?hookActive(CONFIG.aiUrl):Promise.resolve(false),
+  ]);
   CONFIG.aiActive=aiActive;
   return { projects:projects||[], _source:projects?'db':'offline' };
 }
