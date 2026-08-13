@@ -89,6 +89,8 @@ assert.match(html, /id="profileBtn"/);
 assert.match(html, /id="productSwitcher"/);
 assert.match(html, /http-equiv="Content-Security-Policy"/);
 assert.match(html, /script-src 'self' https:\/\/nexus\.vertux\.online/);
+assert.match(html, /connect-src 'self' https:\/\/nexus\.vertux\.online https:\/\/vertuxdb\.duckdns\.org wss:\/\/vertuxdb\.duckdns\.org;/);
+assert.doesNotMatch(html, /zxcqweksn8n\.duckdns\.org/);
 assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i);
 assert.doesNotMatch(html, /\sonclick=/i);
 assert.match(sw, /vertux-workspace-v18/);
