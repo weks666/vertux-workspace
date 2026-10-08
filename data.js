@@ -14,7 +14,9 @@ const CONFIG = {
   // Rockefeller передаёт готовый CSV/XLSX. Браузерный мост не реализован.
   // Четыре режима проверены живыми запросами 2026-10-08; общий бюджет $5.
   aiShieldAuthority: true,
-  aiUrl: 'https://nexus.vertux.online/api/workspace-trainer',
+  // Desktop strips Authorization on Nexus-origin requests. The dedicated data
+  // plane validates this product-scoped Supabase session itself.
+  aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,

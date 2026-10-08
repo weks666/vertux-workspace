@@ -7,7 +7,7 @@ const paid=process.argv.includes('--allow-paid');
 const readEnv=path=>Object.fromEntries(fs.readFileSync(path,'utf8').split(/\r?\n/).filter(l=>l&&!l.startsWith('#')&&l.includes('=')).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1).replace(/^['"]|['"]$/g,'')];}));
 const nexus=readEnv('/etc/vertux-nexus/nexus.env'),trainer=readEnv('/etc/vertux-workspace-trainer/operator.env');
 const base=nexus.NEXUS_VERTUX_WORKSPACE_SUPABASE_URL.replace(/\/$/,''),adminKey=nexus.NEXUS_VERTUX_WORKSPACE_SUPABASE_SERVICE_ROLE;
-const endpoint='https://nexus.vertux.online/api/workspace-trainer',origin='https://weks666.github.io';
+const endpoint='https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',origin='https://weks666.github.io';
 async function auth(path,body,token=adminKey){
   const r=await fetch(base+'/auth/v1'+path,{method:body?'POST':'GET',headers:{apikey:trainer.TRAINER_SUPABASE_ANON_KEY,Authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(10000)});
   if(!r.ok)throw Error('Auth '+path.split('?')[0]+' HTTP '+r.status);
@@ -26,6 +26,8 @@ async function call(token,body,override={}){
 }
 const tokens=[];
 try{
+  const preflight=await fetch(endpoint,{method:'OPTIONS',headers:{Origin:origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'},signal:AbortSignal.timeout(10000)});
+  if(preflight.status!==204||preflight.headers.get('access-control-allow-origin')!==origin)throw Error('Browser preflight failed');
   const found=await auth('/admin/users?per_page=50');
   const scoped=(found.users||[]).filter(u=>u.app_metadata?.nexus_product_id===trainer.TRAINER_PRODUCT_ID&&u.app_metadata?.nexus_organization_id===trainer.TRAINER_ORGANIZATION_ID&&u.app_metadata?.nexus_access==='active');
   const owner=scoped.find(u=>u.app_metadata.role==='owner'),manager=scoped.find(u=>u.app_metadata.role==='manager');
@@ -69,7 +71,7 @@ try{
     replayStatus=(await call(ownerToken,last)).status;
     if(replayStatus!==409)throw Error('Replay was not rejected');
   }
-  console.log(JSON.stringify({status:paid?'LIVE_AI_VERIFIED':'LIVE_HEALTH_VERIFIED',checkedAt:new Date().toISOString(),model:trainer.TRAINER_MODEL,origin,ownerHealth:200,managerHealth:200,foreignOrigin:403,replayStatus,paidRequests:results.length,budgetBefore:health.data.budget,budgetAfter:results.at(-1)?.budget||health.data.budget,results,finance,realLeadTranscriptsSent:0}));
+  console.log(JSON.stringify({status:paid?'LIVE_AI_VERIFIED':'LIVE_HEALTH_VERIFIED',checkedAt:new Date().toISOString(),endpoint,preflightStatus:preflight.status,model:trainer.TRAINER_MODEL,origin,ownerHealth:200,managerHealth:200,foreignOrigin:403,replayStatus,paidRequests:results.length,budgetBefore:health.data.budget,budgetAfter:results.at(-1)?.budget||health.data.budget,results,finance,realLeadTranscriptsSent:0}));
 }catch(e){console.log(JSON.stringify({ok:false,error:e.message}));process.exitCode=1;}
 finally{
   for(const token of tokens){

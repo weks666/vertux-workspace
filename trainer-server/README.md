@@ -5,9 +5,13 @@
 
 ## Рабочий маршрут
 
-Браузер обращается к `https://nexus.vertux.online/api/workspace-trainer`.
-Nexus nginx передаёт только необходимые заголовки по проверенному TLS на
-`https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer`.
+Браузер обращается к `https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer`.
+Служба сама проверяет текущую продуктовую сессию Supabase, роль и scope.
+Desktop удаляет Authorization у запросов на origin Nexus, поэтому продуктовый
+Bearer отправляется только выделенному data plane, как и запросы базы.
+Точный AI-origin разрешён в connect-src после живых проверок доступа и бюджета.
+Дополнительный операторский маршрут `https://nexus.vertux.online/api/workspace-trainer`
+проксирует тот же обработчик по проверенному TLS; frontend его не использует.
 Там точный маршрут ведёт в отдельный контейнер `vertux-workspace-trainer`,
 слушающий только `127.0.0.1:4196`. Он не выполняет workflow n8n.
 
