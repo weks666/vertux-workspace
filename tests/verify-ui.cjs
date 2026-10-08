@@ -58,11 +58,18 @@ const root=path.resolve(__dirname,'..'),dir=path.join(root,'evidence/sales-audit
    const history=await page.evaluate(()=>window.__fixture.aiRequests.filter(x=>x.mode==='debrief').at(-1).history);assert.ok(history.every(x=>['m','c'].includes(x.who)));
    await page.screenshot({path:path.join(dir,'desktop-roleplay.png')});
   });
-  await test('microphone network error stops restarts and navigation aborts microphone',async()=>{
+  await test('microphone errors stop restarts; Desktop offers text input without unavailable capture',async()=>{
    await page.locator('[data-ttab=live]').click();await page.locator('#trMic').click();await page.evaluate(()=>window.__fixture.speech.onerror({error:'network'}));
    await page.locator('#trSpeechError').getByText(/не отвечает/).waitFor();const count=await page.evaluate(()=>window.__fixture.speechStarts);
    await page.waitForTimeout(550);assert.equal(await page.evaluate(()=>window.__fixture.speechStarts),count);
    await page.locator('#trMic').click();await nav('projects');assert.ok(await page.evaluate(()=>window.__fixture.speechAborts>=2));
+   await page.evaluate(()=>{window.nexusProduct.app={getAppSettings:()=>({})};});await nav('trainer');
+   assert.ok(await page.locator('#trMic').isDisabled());assert.ok(await page.locator('#trManual').isEnabled());
+   await page.getByText('В Nexus Desktop распознавание микрофона пока недоступно.',{exact:false}).waitFor();
+   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   await page.screenshot({path:path.join(dir,'mobile-nexus-trainer.png')});await page.setViewportSize({width:1440,height:960});
+   await page.locator('[data-ttab=roleplay]').click();assert.equal(await page.locator('#trSay').count(),0);
+   await page.evaluate(()=>{delete window.nexusProduct.app;});await nav('projects');
   });
   await test('CSV preview separates same-name cities and preserves existing call history on merge',async()=>{
    await nav('import');const csv='Company,Phone,City,Call_Script,Context\nТестовый банкетный зал,80000000001,Санкт-Петербург,Обновлённый скрипт,Проверенный контекст\nНовый зал,80000000005,Москва,Скрипт А,Контекст А\nНовый зал,80000000006,Казань,Скрипт Б,Контекст Б';

@@ -519,7 +519,10 @@
   let SREC=null;
 
   const aiOn=()=>window.VC.CONFIG.aiActive===true&&USER?.can?.edit===true;
-  const sttOn=()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition);
+  // The installed Nexus product session denies microphone permissions. Exposing
+  // SpeechRecognition in Electron does not mean that capture is available.
+  const desktopSpeechBlocked=()=>typeof window.nexusProduct?.app?.getAppSettings==='function';
+  const sttOn=()=>!desktopSpeechBlocked()&&!!(window.SpeechRecognition||window.webkitSpeechRecognition);
   const trLead=()=>DATA.projects.find(x=>String(x.id)===String(TR.leadId))||null;
   const leadCtx=p=>p?{ niche:String(p.niche||'').slice(0,80), city:String(p.city||'').slice(0,80), issues:String(p.issues||'').slice(0,600),
                        script:String(p.call_script||'').slice(0,4000),context:String(p.context||'').slice(0,1800) }:{ niche:'', city:'', issues:'', script:'',context:'' };
@@ -545,7 +548,7 @@
       <div class="hint"><div><b>${aiOn()?'Сервис тренера готов к запросам.':'AI-тренер пока не подключён.'}</b> ${aiOn()?'Ответ и разбор появятся после запроса.':'Можно подготовить текст разговора или скрипт. Для ответа ИИ требуется подключённый сервис.'} <button class="btn" id="trCheck">Проверить подключение</button><span class="status-line" id="trCheckMsg" role="status"></span></div></div>`;
 
     if(TR.tab==='live') return head+`
-      ${sttOn()?'':'<div class="hint"><span>⚠️</span><div>Этот браузер не умеет распознавать речь — нужен Chrome или Edge.</div></div>'}
+      ${sttOn()?'':`<div class="hint"><div>${desktopSpeechBlocked()?'В Nexus Desktop распознавание микрофона пока недоступно. Добавляй реплики текстом — подсказки и разбор работают.':'В этом браузере распознавание речи недоступно. Добавляй реплики текстом или используй Chrome/Edge с доступом к микрофону.'}</div></div>`}
       <div class="row-inline" style="margin-bottom:14px">
         ${leadSelect('trLeadSel')}
         <button class="btn ${TR.listening?'':'gold'}" id="trMic" ${sttOn()?'':'disabled'}>${TR.listening?'⏹ Стоп':'🎙 Начать слушать'}</button>
@@ -641,6 +644,7 @@
   }
 
   function trStartSTT(){
+    if(!sttOn())return;
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR) return;
     TR.speechError='';

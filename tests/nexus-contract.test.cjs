@@ -81,7 +81,7 @@ assert.match(app, /async function signOutSafely\(destination\)/);
 assert.match(app, /AI-тренер пока не подключён/);
 assert.match(app, /Добавляй реплики текстом/);
 assert.doesNotMatch(app, /Workspace увидит его автоматически/);
-assert.match(app, /const sttOn=\(\)=>!!\(window\.SpeechRecognition\|\|window\.webkitSpeechRecognition\)/);
+// Browser availability and Desktop capture restrictions are exercised in verify-ui.
 assert.match(app, /function trStartSTT\(\)/);
 assert.match(app, /id="trMic" \$\{sttOn\(\)\?'':'disabled'\}/);
 
@@ -92,7 +92,7 @@ assert.match(html, /script-src 'self' https:\/\/nexus\.vertux\.online/);
 assert.match(html, /connect-src 'self' https:\/\/nexus\.vertux\.online https:\/\/vertuxdb\.duckdns\.org wss:\/\/vertuxdb\.duckdns\.org https:\/\/zxcqweksn8n\.duckdns\.org;/);
 assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i);
 assert.doesNotMatch(html, /\sonclick=/i);
-assert.match(sw, /vertux-workspace-v22/);
+assert.match(sw, /vertux-workspace-v23/);
 assert.match(sw, /manifest\.webmanifest/);
 assert.match(sw, /const SHELL_URLS = new Set/);
 assert.match(sw, /!policy\.includes\('no-store'\)/);
