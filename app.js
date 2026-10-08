@@ -402,6 +402,14 @@
     </div>`;
   }
 
+  function telephonyHelp(inDrawer=false){
+    return `<details class="${inDrawer?'':'panel '}telephony-help"><summary class="${inDrawer?'':'panel-b'}">Как подключить звонки с компьютера</summary><div class="${inDrawer?'':'panel-b'}">
+      <p><b>Через интернет и гарнитуру ПК.</b> Нужен голосовой номер у оператора с SIP-доступом. Для России пример такой связки — Novofon + MicroSIP.</p>
+      <ol><li>В кабинете оператора подключи номер, создай отдельную линию менеджера и выбери этот номер для исходящих звонков.</li><li>Установи MicroSIP. Сервер, логин и пароль линии введи в MicroSIP; для Novofon сервер — sip.novofon.ru. Дождись статуса «Онлайн».</li><li>В Windows открой «Параметры → Приложения → Приложения по умолчанию», найди тип ссылки TEL и выбери MicroSIP.</li><li>Выбери в MicroSIP микрофон и наушники. Проверь звонок на свой второй телефон: звук в обе стороны, исходящий номер и обратный вызов.</li></ol>
+      <p><b>Если номер из Т-Мобайла.</b> Это дополнительный номер к SIM-карте. Для разговора с ПК можно связать телефон с Windows через «Связь с телефоном» и Bluetooth. Включи исходящие с виртуального номера в Т-Мобайле; телефон должен быть рядом. Показ номера и передачу набора из Workspace нужно проверить на твоём устройстве.</p>
+      <p>«Набрать» передаёт номер приложению Windows. Если оно не открылось, используй «Скопировать номер». Workspace не получает подтверждение соединения, длительность или запись: сохрани итог после фактического разговора. Пароли телефонии сюда вводить не нужно.</p>
+    </div></details>`;
+  }
   V.calls=()=>{
     const calls=allCalls();
     const today=calls.filter(c=>dayKey(c.at)===dayKey(new Date())).length;
@@ -411,7 +419,7 @@
     const byPerson={};
     calls.forEach(c=>{ const k=c.by||'—'; byPerson[k]=(byPerson[k]||0)+1; });
     return `
-    <details class="panel telephony-help"><summary class="panel-b">Как звонить с виртуального номера</summary><div class="panel-b"><p>«Набрать» открывает программу для звонков, назначенную в Windows для ссылок tel:. Сам Workspace пока не подключён к оператору и не получает длительность, запись или подтверждение соединения.</p><p>Нужен постоянный голосовой номер с исходящими звонками и SIP. В кабинете оператора назначь менеджеру отдельную внутреннюю линию, настрой его приложение по инструкции оператора и выбери купленный номер как исходящий Caller ID. Затем назначь это приложение для TEL и проверь звонок на свой номер.</p><p>Номер для разового получения SMS не подходит. Если приложение не открылось, скопируй номер из карточки и набери вручную. Итог разговора здесь отмечает менеджер.</p><a class="link" href="https://zadarma.com/ru/support/instructions/windows/microsip/" target="_blank" rel="noopener noreferrer">Пример настройки SIP-приложения у оператора ↗</a></div></details>
+    ${telephonyHelp()}
     <div class="grid kpis">
       ${kpi('Сегодня',today,ICONS.calls)}
       ${kpi('За 7 дней',week,ICONS.calls)}
@@ -922,11 +930,22 @@
     });
     openProject(p.id);
   }
-  async function doCall(p){
+  function doCall(p){
     const phone=window.WorkspaceCore.phone(p.phone);
     if(!phone){alert('Не удалось распознать телефон. Проверь номер в карточке.');return;}
-    if(!PENDING_CALL.has(String(p.id))) prepareCall(p,'dial');
-    window.location.href='tel:'+phone;
+    try{
+      // Nexus forwards new-window TEL requests to Windows; same-window
+      // foreign navigation is blocked. A null result does not prove failure:
+      // Nexus intentionally denies the browser window after the handoff.
+      window.open('tel:'+phone,'_blank','noopener,noreferrer');
+      if(!PENDING_CALL.has(String(p.id))) prepareCall(p,'dial');
+      const msg=$('#dialMsg');
+      if(msg) msg.textContent='Если телефонное приложение не открылось, раскрой инструкцию ниже или скопируй номер. Отмечай итог только после фактического звонка.';
+    }catch(_){
+      if(!$('#callBtn')) openProject(p.id);
+      const msg=$('#dialMsg');
+      if(msg) msg.textContent='Не удалось открыть приложение для звонков. Скопируй номер и проверь настройку TEL по инструкции ниже.';
+    }
   }
   function renderCallsBadge(p){
     const tr=document.querySelector(`tr[data-id="${p.id}"] .co`); if(!tr) return;
@@ -1060,7 +1079,8 @@
 
         ${canEdit&&p.phone?`<div class="dr-sec">Звонок</div>
           <div class="row-inline"><button class="btn gold" id="callBtn">Набрать ${esc(p.phone)}</button><button class="btn" id="copyPhone">Скопировать номер</button><button class="btn" id="manualCall">Записать ручной звонок</button></div>
-          <p class="status-line">Номер откроется в телефонном приложении. Соединение и длительность Workspace не проверяет.</p>
+          <p class="status-line" id="dialMsg" role="status">Номер передаётся программе звонков в Windows. Перед первым звонком подключи её по инструкции.</p>
+          ${telephonyHelp(true)}
           <div id="outcomeBox" class="outcomes${(pending||last)?' live':''}">
             <div class="mut" style="font-size:12px;margin:10px 0 8px">Чем закончился звонок?</div>
             <div class="out-row">${Object.entries(OUTCOMES).map(([k,v])=>
@@ -1082,7 +1102,7 @@
           <div id="ncMsg" class="mut" style="font-size:12px;margin-top:6px">${nextCallOf(p)&&!calls.length?'Звонков в журнале нет. Это сохранённое напоминание для первого контакта; оно не подтверждает прошлый звонок.':'Напоминание появится в плане звонков в указанную дату.'}</div>`:''}
 
         <div class="dr-sec">Контакты</div>
-        <div class="dr-row"><span class="l">Телефон</span><span class="v">${window.WorkspaceCore.phone(p.phone)?`<a class="link" href="tel:${esc(window.WorkspaceCore.phone(p.phone))}">${esc(p.phone)}</a>`:esc(p.phone||'—')}</span></div>
+        <div class="dr-row"><span class="l">Телефон</span><span class="v">${window.WorkspaceCore.phone(p.phone)?`<a class="link" href="tel:${esc(window.WorkspaceCore.phone(p.phone))}" target="_blank" rel="noopener noreferrer">${esc(p.phone)}</a>`:esc(p.phone||'—')}</span></div>
         <div class="dr-row"><span class="l">Почта</span><span class="v">${esc(p.email||'—')}</span></div>
         <div class="dr-row"><span class="l">Адрес</span><span class="v">${esc(p.address||'—')}</span></div>
         <div class="dr-row"><span class="l">Сайт</span><span class="v">${siteUrl?`<a class="link" href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer">открыть ↗</a>`:'<span class="mut">нет сайта</span>'}</span></div>

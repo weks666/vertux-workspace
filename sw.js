@@ -1,4 +1,4 @@
-const CACHE = 'vertux-workspace-v23';
+const CACHE = 'vertux-workspace-v24';
 const ASSETS = ['./', './index.html', './styles.css', './workspace-core.js', './outreach.js', './data.js', './auth.js', './app.js', './manifest.webmanifest', './nexus-product.json', './icon.svg', './vendor/supabase.js', './vendor/xlsx.full.min.js'];
 const SHELL_URLS = new Set(ASSETS.map(asset => new URL(asset, self.registration.scope).href));
 
