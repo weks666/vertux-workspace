@@ -12,7 +12,7 @@ const localStorage = {
 };
 
 let clientCalls = 0;
-const operations = { inserts: [], upserts: [] };
+const operations = { inserts: [], updates: [] };
 const client = {
   from(table) {
     assert.equal(table, 'projects');
@@ -21,9 +21,9 @@ const client = {
         operations.inserts.push(rows);
         return { error: null };
       },
-      async upsert(rows, options) {
-        operations.upserts.push({ rows, options });
-        return { error: null };
+      update(row) {
+        const operation={row};operations.updates.push(operation);
+        return {eq(field,id){operation.id=id;return this;},select(){return this;},async maybeSingle(){return {data:{id:operation.id},error:null};}};
       },
     };
   },
@@ -31,6 +31,7 @@ const client = {
 
 const window = {
   crypto: crypto.webcrypto,
+  WorkspaceCore: require('../workspace-core.js'),
   VCAuth: { client: () => { clientCalls += 1; return client; } },
 };
 const context = vm.createContext({
@@ -145,9 +146,8 @@ const makeFile = (name, content) => ({
   assert.equal(operations.inserts[0][0].raw._import.batch_id, 'batch-test');
   assert.equal(operations.inserts[0][0].raw._import.file_hash, hash);
 
-  const enriched = operations.upserts[0].rows[0];
-  assert.equal(operations.upserts[0].options.onConflict, 'id');
-  assert.equal(enriched.id, 'project-1');
+  const enriched = operations.updates[0].row;
+  assert.equal(operations.updates[0].id, 'project-1');
   assert.equal(enriched.phone, '+71111111111');
   for (const protectedField of ['stage', 'progress', 'notes', 'demo', 'raw']) {
     assert.equal(protectedField in enriched, false, `${protectedField} must stay untouched`);

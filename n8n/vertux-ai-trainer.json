@@ -1,5 +1,6 @@
 {
-  "name": "Vertux AI Trainer",
+  "name": "ARCHIVE - Vertux AI Trainer (not production authorized)",
+  "active": false,
   "nodes": [
     {
       "parameters": {
@@ -160,5 +161,5 @@
     "OpenRouter": { "main": [[{ "node": "Extract", "type": "main", "index": 0 }]] },
     "Extract": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "none", "saveManualExecutions": false }
 }

@@ -10,12 +10,11 @@ const CONFIG = {
   supabaseUrl: 'https://vertuxdb.duckdns.org',
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgyMDkxMjExLCJleHAiOjIwOTc0NTEyMTF9.Kj4VayNI8XRINRxNyq037_t8LLsn0IeNwblzuJu9AqI',
 
-  // n8n остаётся мостом для AI-тренера.
-  // Rockefeller не заменяем собственной n8n-цепочкой: готовый файл импортируется ниже,
-  // а автоматизация будет выполняться локальным браузерным мостом с отдельным профилем.
-  // Включать только отдельным review-коммитом после production gate Vertux Shield.
-  aiShieldAuthority: false,
-  aiUrl: 'https://zxcqweksn8n.duckdns.org/webhook/vertux-ai-trainer',
+  // Защищённый тренер: отдельная служба, текущие права Nexus и постоянный бюджет.
+  // Rockefeller передаёт готовый CSV/XLSX. Браузерный мост не реализован.
+  // Четыре режима проверены живыми запросами 2026-10-08; общий бюджет $5.
+  aiShieldAuthority: true,
+  aiUrl: 'https://nexus.vertux.online/api/workspace-trainer',
 
   // Доля менеджера с оплаченной сделки по умолчанию, % (правится в каждой сделке).
   managerPercent: 35,
@@ -87,7 +86,7 @@ function loadXLSX(){
   if(!xlsxLoading) xlsxLoading=new Promise((res,rej)=>{
     const s=document.createElement('script');
     s.src='vendor/xlsx.full.min.js';
-    s.onload=()=>res(window.XLSX); s.onerror=()=>rej(new Error('не удалось загрузить читалку XLSX'));
+    s.onload=()=>res(window.XLSX); s.onerror=()=>{ xlsxLoading=null; s.remove(); rej(new Error('Не удалось загрузить обработчик XLSX. Проверьте соединение и выберите файл ещё раз.')); };
     document.head.appendChild(s);
   });
   return xlsxLoading;
@@ -129,7 +128,7 @@ function rememberImport(entry){
 
 /* ---------- Форматы источников ---------- */
 const SOCIAL=/(t\.me|telegram|vk\.com|instagram|facebook|wa\.me|whatsapp|youtube|max\.ru|ok\.ru|api\.whatsapp)/i;
-const pick=(o,...keys)=>{ for(const k of keys){ const v=o[k]; if(v!=null&&String(v).trim()!=='') return String(v).trim(); } return ''; };
+const pick=(o,...keys)=>{ for(const k of keys){ const actual=Object.keys(o).find(x=>x.trim().toLowerCase()===k.toLowerCase()); const v=o[actual]; if(v!=null&&String(v).trim()!=='') return String(v).trim(); } return ''; };
 const num=v=>{ const n=parseFloat(String(v).replace(',','.')); return isFinite(n)?n:null; };
 const int=v=>{ const n=parseInt(String(v).replace(/\s/g,''),10); return isFinite(n)?n:null; };
 const multi=(o,base,n=3)=>{ const a=[]; for(let i=1;i<=n;i++){ const v=pick(o,base+' '+i); if(v) a.push(v); } return a; };
@@ -146,7 +145,7 @@ const FORMATS=[
         type:(t==='creation'||t==='redesign')?t:null,
         site:pick(o,'Website'), issues:pick(o,'Issues'), context:pick(o,'Context'),
         call_script:pick(o,'Call_Script'), gen_prompt:pick(o,'Antigravity_Prompt'),
-        vk_link:pick(o,'VK_Link'),
+        vk_link:pick(o,'VK_Link'), source_url:pick(o,'Source_URL'),
         processed:true, source:'rockfeller',
       };
     },
@@ -190,7 +189,7 @@ function mapRows(objs, fmt){
   for(const o of objs){
     const r=fmt.map(o);
     if(!r.company){ skipped++; continue; }
-    const key=normName(r.company);
+    const key=window.WorkspaceCore.identityKey(r);
     if(seen.has(key)){ dupes++; continue; }
     seen.add(key);
     Object.keys(r).forEach(k=>{ if(r[k]===''||r[k]==null) delete r[k]; });
@@ -207,43 +206,91 @@ const db=()=>{
   return c;
 };
 
+async function readProjectPages(columns='*'){
+  const c=db(), rows=[];
+  for(let offset=0;offset<50000;offset+=500){
+    const {data,error}=await c.from('projects').select(columns).order('id',{ascending:true}).range(offset,offset+499);
+    if(error) throw error;
+    rows.push(...(data||[]));
+    if(!data||data.length<500) return rows;
+  }
+  throw new Error('База превышает лимит загрузки. Импорт остановлен, чтобы не создавать дубли.');
+}
 async function loadProjects(){
   const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
   if(!c) return null;
-  const { data, error } = await c.from('projects').select('*')
-    .order('processed',{ascending:false})
-    .order('rating',{ascending:false,nullsFirst:false})
-    .limit(1000);
-  if(error){ console.warn('[Workspace] не удалось прочитать проекты:', error.message); return null; }
-  return data;
+  return (await readProjectPages('*,finance:workspace_project_finance(money,updated_at)')).sort((a,b)=>Number(Boolean(b.processed))-Number(Boolean(a.processed))||(Number(b.rating)||0)-(Number(a.rating)||0));
 }
 
 async function savePatch(id, patch){
-  const { error } = await db().from('projects')
-    .update({ ...patch, updated_at:new Date().toISOString() }).eq('id', id);
+  const { data,error } = await db().from('projects')
+    .update({ ...patch, updated_at:new Date().toISOString() }).eq('id', id).select('id').maybeSingle();
   if(error) throw error;
+  if(!data) throw new Error('Запись не сохранена: нет доступа или карточка уже удалена. Обновите базу.');
 }
 const saveStage=(id,stage,progress)=>savePatch(id,{stage:stage,progress:progress});
 const saveNotes=(id,notes)=>savePatch(id,{notes:notes});
 const saveDemo=(id,demo)=>savePatch(id,{demo:demo});
 
-/* Всё «наше» (журнал звонков, напоминания, деньги) живёт в projects.raw —
- * отдельные таблицы без SSH-доступа не создать, а raw в PROTECTED:
- * переживает и слияние, и обогащение при импорте. */
-async function saveRaw(project, patch){
-  const raw=(project.raw&&typeof project.raw==='object')?project.raw:{};
-  const next={ ...raw, ...patch };
-  await savePatch(project.id, { raw:next });
-  project.raw=next;
-  return next;
+/* Журнал и напоминания сохраняются в raw. Деньги отделены в таблицу с RLS
+ * owner/admin; скрытие раздела в интерфейсе не используется как защита. */
+const rowWrites=new Map();
+function saveRaw(project, patch){
+  const id=String(project.id);
+  const task=(rowWrites.get(id)||Promise.resolve()).catch(()=>{}).then(async()=>{
+    for(let attempt=0;attempt<3;attempt++){
+      const {data:current,error:readError}=await db().from('projects').select('raw,updated_at').eq('id',id).single();
+      if(readError||!current) throw new Error('Не удалось прочитать карточку перед сохранением. Обновите базу.');
+      const raw=current.raw&&typeof current.raw==='object'&&!Array.isArray(current.raw)?current.raw:{};
+      const change=typeof patch==='function'?patch(raw):patch;
+      if(Object.prototype.hasOwnProperty.call(change,'money')) throw new Error('Деньги сохраняются отдельно от карточки. Обновите Workspace.');
+      const next={...raw,...change};
+      const stamp=new Date(Math.max(Date.now(),(new Date(current.updated_at).getTime()||0)+1)).toISOString();
+      let query=db().from('projects').update({raw:next,updated_at:stamp}).eq('id',id);
+      query=current.updated_at?query.eq('updated_at',current.updated_at):query.is('updated_at',null);
+      const {data:saved,error}=await query.select('id').maybeSingle();
+      if(error) throw error;
+      if(saved){project.raw=next;project.updated_at=stamp;return next;}
+    }
+    throw new Error('Карточку изменил другой сотрудник. Обновите данные и повторите сохранение.');
+  });
+  rowWrites.set(id,task);
+  task.finally(()=>{if(rowWrites.get(id)===task)rowWrites.delete(id);}).catch(()=>{});
+  return task;
+}
+
+const financeWrites=new Map();
+function saveMoney(project,patch){
+  const id=String(project.id);
+  const task=(financeWrites.get(id)||Promise.resolve()).catch(()=>{}).then(async()=>{
+    for(let attempt=0;attempt<3;attempt++){
+      const table=db().from('workspace_project_finance');
+      const {data:current,error:readError}=await table.select('money,updated_at').eq('project_id',id).maybeSingle();
+      if(readError)throw readError;
+      const before=current?.money||{};
+      const money=typeof patch==='function'?patch(before):{...before,...patch};
+      const stamp=new Date(Math.max(Date.now(),(new Date(current?.updated_at).getTime()||0)+1)).toISOString();
+      let query=db().from('workspace_project_finance');
+      query=current?query.update({money,updated_at:stamp}).eq('project_id',id).eq('updated_at',current.updated_at):query.insert({project_id:id,money,updated_at:stamp});
+      const {data:saved,error}=await query.select('project_id').maybeSingle();
+      if(error?.code==='23505')continue;
+      if(error)throw error;
+      if(saved){project.finance={money,updated_at:stamp};return money;}
+    }
+    throw new Error('Деньги не сохранены: нет доступа или запись изменена. Обновите данные.');
+  });
+  financeWrites.set(id,task);
+  task.finally(()=>{if(financeWrites.get(id)===task)financeWrites.delete(id);}).catch(()=>{});
+  return task;
 }
 
 async function logCall(project, entry){
-  const raw=(project.raw&&typeof project.raw==='object')?project.raw:{};
-  const calls=Array.isArray(raw.calls)?raw.calls.slice():[];
-  calls.push(entry);
-  await saveRaw(project, { calls:calls });
-  return calls;
+  const saved=await saveRaw(project,raw=>{
+    const calls=Array.isArray(raw.calls)?raw.calls.slice():[];
+    if(!calls.some(c=>entry.id?c.id===entry.id:c.at===entry.at)) calls.push(entry);
+    return {calls};
+  });
+  return saved.calls;
 }
 const callsOf=p=>{
   const r=p&&p.raw; const a=r&&typeof r==='object'&&r.calls;
@@ -253,24 +300,25 @@ const callsOf=p=>{
 /* ---------- Импорт ---------- */
 /* Считаем, что упадёт, ДО того как что-то трогаем в базе. */
 async function planImport(rows){
-  const { data, error } = await db().from('projects').select('id, company').limit(5000);
-  if(error) throw error;
-  const idx=new Map(); (data||[]).forEach(r=>idx.set(normName(r.company), r.id));
-  const fresh=[], existing=[];
+  const data=await readProjectPages('id,company,phone,city,address,source_url');
+  const fresh=[], existing=[], conflicts=[];
   rows.forEach(r=>{
-    const id=idx.get(normName(r.company));
-    if(id) existing.push({ ...r, id:id }); else fresh.push(r);
+    const match=window.WorkspaceCore.matchLead(r,data);
+    if(match.kind==='existing') existing.push({ ...r, id:match.id });
+    else if(match.kind==='conflict') conflicts.push(r);
+    else fresh.push(r);
   });
-  return { fresh:fresh, existing:existing, total:data?data.length:0 };
+  return {fresh,existing,conflicts,total:data.length};
 }
 
 async function runImport(plan, mode, onProgress, meta){
   if(mode==='replace'){
     throw new Error('полная замена отключена: сначала нужен серверный импорт с транзакцией и откатом');
   }
+  if(!['merge','add'].includes(mode)) throw new Error('Неизвестный режим импорта');
 
   const c=db();
-  const report={ added:0, enriched:0, skipped:0, deleted:0, batchId:(meta&&meta.batchId)||null };
+  const report={ added:0, enriched:0, skipped:(plan.conflicts||[]).length, deleted:0, batchId:(meta&&meta.batchId)||null };
   const say=m=>{ if(onProgress) onProgress(m); };
 
   const importMeta=meta?{
@@ -294,15 +342,21 @@ async function runImport(plan, mode, onProgress, meta){
       const chunk=plan.existing.slice(i,i+100).map(r=>{
         const x={ ...r, updated_at:new Date().toISOString() };
         PROTECTED.forEach(k=>{ delete x[k]; });
+        Object.keys(x).forEach(k=>{if(x[k]===null||x[k]===undefined||x[k]==='')delete x[k];});
+        if(x.processed!==true) delete x.processed;
         return x;
       });
       say('обогащаю '+(i+chunk.length)+' из '+plan.existing.length+'…');
-      const { error } = await c.from('projects').upsert(chunk,{ onConflict:'id' });
-      if(error) throw error;
-      report.enriched+=chunk.length;
+      for(const row of chunk){
+        const {id,...patch}=row;
+        const {data:saved,error}=await c.from('projects').update(patch).eq('id',id).select('id').maybeSingle();
+        if(error) throw error;
+        if(!saved) throw new Error('Компания исчезла или недоступна. Выбери файл снова для пересчёта импорта.');
+        report.enriched++;
+      }
     }
   } else if(mode==='add'){
-    report.skipped=plan.existing.length;
+    report.skipped+=plan.existing.length;
   }
   return report;
 }
@@ -317,36 +371,39 @@ async function hookCall(url, payload){
     const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
     if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
   }catch(e){}
-  const res=await fetch(endpoint,{
-    method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
-    body:JSON.stringify(payload||{}),
-  });
-  if(res.status===404) throw new Error('воркфлоу не активирован в n8n (импорт из папки n8n/ + Activate)');
-  const j=await res.json().catch(()=>({}));
-  if(!res.ok||j.error) throw new Error(j.error||('HTTP '+res.status));
-  return j;
+  if(!token) throw new Error('Сессия завершилась. Повтори вход через Nexus.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
+  try{
+    const res=await fetch(endpoint,{
+      method:'POST',redirect:'error',cache:'no-store',signal:controller.signal,
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body:JSON.stringify(payload||{}),
+    });
+    const j=await res.json().catch(()=>null);
+    const messages={401:'Сессия завершилась. Повтори вход через Nexus.',403:'Тренер недоступен для этого аккаунта.',404:'Сервис тренера ещё не подключён.',429:'Лимит тренера исчерпан. Попробуй позже.',503:'Тренер временно недоступен. Попробуй позже.'};
+    if(j?.error==='total_budget_exhausted')throw new Error('Общий бюджет ИИ исчерпан. Автоматического пополнения нет — обратись к владельцу Workspace.');
+    if(j?.error==='daily_budget_exhausted')throw new Error('Суточный лимит ИИ исчерпан. Он обновится после 03:00 МСК, если общий бюджет ещё доступен.');
+    if(res.status===413)throw new Error('Текст слишком длинный. Сократи диалог или отправь отдельный фрагмент.');
+    if(!res.ok||!j||j.error) throw new Error(messages[res.status]||'Тренер не смог ответить. Текст сохранён на экране; запрос можно повторить.');
+    if(payload.mode!=='health'&&(!j.text||typeof j.text!=='string')) throw new Error('Тренер вернул пустой ответ. Попробуй ещё раз.');
+    return j;
+  }catch(e){
+    if(e.name==='AbortError') throw new Error('Тренер не ответил за 45 секунд. Текст сохранён; повтори запрос позже.');
+    throw e;
+  }finally{clearTimeout(timer);}
 }
-const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ mode:mode, ...(payload||{}) });
+const aiCall=(mode,payload)=>hookCall(CONFIG.aiUrl,{ ...(payload||{}),mode:mode,requestId:window.crypto.randomUUID() });
 
 async function hookActive(url){
   if(!AI_SHIELD_AUTHORIZED) return false;
   const endpoint=safeHttpsUrl(url);
   if(!endpoint) return false;
   try{
-    let token='';
-    const c=window.VCAuth&&window.VCAuth.client&&window.VCAuth.client();
-    if(c){ const { data }=await c.auth.getSession(); token=(data&&data.session&&data.session.access_token)||''; }
-    const res=await fetch(endpoint,{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-      body:JSON.stringify({action:'health',mode:'health'}),
-    });
-    if(!res.ok) return false;
-    const body=await res.json().catch(()=>null);
-    return !!(body&&(body.ok===true||body.status==='ok'||body.health==='ok'));
+    const body=await hookCall(endpoint,{mode:'health'});
+    return body.ok===true&&body.service==='vertux-trainer'&&body.ready===true;
   }catch(e){ return false; }
 }
+async function probeAI(){CONFIG.aiActive=await hookActive(CONFIG.aiUrl);return CONFIG.aiActive;}
 
 async function loadData(){
   const [projects,aiActive]=await Promise.all([
@@ -360,8 +417,8 @@ async function loadData(){
 window.VC = {
   CONFIG, loadData, loadProjects,
   safeHttpUrl, safeHttpsUrl, exactHttpsAssetUrl,
-  saveStage, saveNotes, saveDemo, savePatch, saveRaw,
-  logCall, callsOf, aiCall,
+  saveStage, saveNotes, saveDemo, savePatch, saveRaw, saveMoney,
+  logCall, callsOf, aiCall, probeAI,
   readFileRows, fileFingerprint, findImported, rememberImport,
   detectFormat, mapRows, planImport, runImport,
   FORMATS,

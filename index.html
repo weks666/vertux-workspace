@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self' https://nexus.vertux.online; style-src 'self' 'unsafe-inline' https://nexus.vertux.online; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://nexus.vertux.online https://vertuxdb.duckdns.org wss://vertuxdb.duckdns.org; worker-src 'self'; manifest-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vertux Workspace</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0a0a0c" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -63,10 +64,10 @@
           <span class="crumb-sub" id="pageSub"></span>
         </div>
         <div class="top-actions">
-          <button class="btn product-switcher" id="productSwitcher" type="button" hidden><span aria-hidden="true">V</span> Vertux Workspace⌄</button>
+          <button class="btn product-switcher" id="productSwitcher" type="button" aria-label="Сменить Workspace" title="Сменить Workspace" hidden><span class="switcher-mark" aria-hidden="true">V</span><span class="switcher-label">Vertux Workspace</span><svg class="switcher-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button>
           <div class="search">
             <span class="s-ic">⌕</span>
-            <input id="globalSearch" type="text" placeholder="Поиск по проектам, лидам…" />
+            <input id="globalSearch" type="text" aria-label="Поиск по проектам и лидам" placeholder="Поиск по проектам, лидам…" />
           </div>
           <button class="btn ghost" id="refreshBtn" title="Обновить">⟳</button>
         </div>
@@ -76,12 +77,14 @@
     </main>
 
     <div class="drawer-scrim" id="drawerScrim"></div>
-    <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+    <aside class="drawer" id="drawer" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Карточка компании" inert></aside>
     <div id="modal"></div>
   </div>
 
   <!-- Библиотеки лежат рядом: CDN (jsdelivr) в РФ заблокирован, без VPN страница висла. -->
   <script src="vendor/supabase.js"></script>
+  <script src="workspace-core.js"></script>
+  <script src="outreach.js"></script>
   <script src="data.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>

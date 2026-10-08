@@ -7,12 +7,13 @@
   const initials=s=>String(s||'?').trim().charAt(0).toUpperCase();
   const sum=(a,f)=>a.reduce((s,x)=>s+f(x),0);
   const plural=(n,a,b,c)=>{const m=n%100,k=n%10;return n+' '+(m>=11&&m<=14?c:k===1?a:k>=2&&k<=4?b:c);};
-  const fmtMoney=n=>isFinite(n)&&n>0?Math.round(n).toLocaleString('ru-RU')+' ₽':'—';
-  const moneyOf=p=>(p.raw&&typeof p.raw==='object'&&p.raw.money)||null;
-  const pctOf=m=>(m&&m.percent!=null)?Number(m.percent):window.VC.CONFIG.managerPercent;
+  const fmtMoney=n=>n!=null&&Number.isFinite(Number(n))&&Number(n)>=0?Number(n).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ₽':'—';
+  const moneyOf=p=>p.finance?.money||null;
+  const hasAmount=m=>m?.amount!==null&&m?.amount!==undefined&&m.amount!==''&&Number.isFinite(Number(m.amount))&&Number(m.amount)>=0&&Number(m.amount)<=1e12;
+  const moneySplit=m=>window.WorkspaceCore.moneySplit(Number(m.amount),pctOf(m));
+  const pctOf=m=>(m&&m.percent!=null&&Number.isFinite(Number(m.percent)))?Math.min(100,Math.max(0,Number(m.percent))):window.VC.CONFIG.managerPercent;
   const nextCallOf=p=>(p.raw&&typeof p.raw==='object'&&p.raw.next_call)||null;
-  const isDue=p=>{const nc=nextCallOf(p);if(!nc)return false;
-    const eod=new Date();eod.setHours(23,59,59,999);return new Date(nc)<=eod;};
+  const isDue=p=>window.WorkspaceCore.isDue(p);
   const fmtDay=iso=>{const d=new Date(iso);return d.getDate()+'.'+String(d.getMonth()+1).padStart(2,'0');};
 
   const ICONS={
@@ -74,13 +75,13 @@
   /* Итоги звонка. stage — куда двигаем воронку, если это движение вперёд. */
   const OUTCOMES={
     talked:   {label:'Поговорили',   ic:'💬', stage:'contacted'},
-    demo:     {label:'Просит демку', ic:'🎯', stage:'demo_sent'},
+    demo:     {label:'Просит демку', ic:'🎯', stage:'contacted'},
     callback: {label:'Перезвонить',  ic:'🔁', stage:'contacted'},
     no_answer:{label:'Не взяли',     ic:'📵', stage:null},
     refused:  {label:'Отказ',        ic:'✖',  stage:'refused'},
   };
 
-  let DATA=null, USER=null, view='dashboard', pFilter='all', q='', serviceModulePromise=null;
+  let DATA=null, USER=null, view='dashboard', pFilter='all', q='', projectLimit=300,serviceModulePromise=null,lastDrawerFocus=null,lastModalFocus=null;
 
   async function ensureServiceModule(){
     if(customElements.get('vertux-service-center')) return;
@@ -90,20 +91,19 @@
     serviceModulePromise=(async()=>{
       const result=await bridge.config();
       if(!result||result.ok!==true) throw new Error((result&&result.error&&result.error.message)||'Nexus не выдал конфигурацию модуля');
-      const moduleVersion=String(result.data&&result.data.moduleVersion||'');
-      if(moduleVersion!=='1.2.1') throw new Error('Nexus вернул несовместимую версию системного модуля');
-      const canonicalAssetUrl=new URL('/service-module/v1.2.1/vertux-service-center.js',window.VCAuth.nexusOrigin()).href;
+      const canonical=window.WorkspaceCore.serviceAsset(result.data,window.VCAuth.nexusOrigin());
       const assetUrl=window.VC.exactHttpsAssetUrl(
-        canonicalAssetUrl,
+        canonical.url,
         window.VCAuth.nexusOrigin(),
-        '/service-module/v1.2.1/vertux-service-center.js',
+        canonical.pathname,
       );
       if(!assetUrl) throw new Error('Nexus вернул недоверенный адрес модуля');
       await new Promise((resolve,reject)=>{
         const script=document.createElement('script');
         script.src=assetUrl;
-        script.onload=resolve;
-        script.onerror=()=>reject(new Error('Не удалось загрузить системный модуль Vertux'));
+        const timer=setTimeout(()=>{script.remove();reject(new Error('Системный модуль не ответил вовремя'));},12000);
+        script.onload=()=>{clearTimeout(timer);customElements.get('vertux-service-center')?resolve():reject(new Error('Системный модуль не зарегистрирован'));};
+        script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('Не удалось загрузить системный модуль Vertux'));};
         document.head.appendChild(script);
       });
     })();
@@ -236,7 +236,6 @@
       <dl class="profile-details">
         <div><dt>Роль в Workspace</dt><dd>${esc((USER&&USER.role)||'—')}</dd></div>
         <div><dt>Вход</dt><dd>${USER&&USER.nexusManaged?'Через Vertux Nexus':'Локальный режим'}</dd></div>
-        <div><dt>Product identity</dt><dd>${USER&&USER.id?esc(String(USER.id).slice(0,8)+'…'):'—'}</dd></div>
       </dl>
       <div class="profile-actions"><button class="btn gold" id="profileNexusBtn">Имя, пароль и 2FA в Nexus</button><button class="btn" id="profileProductsBtn">Сменить продукт</button><button class="btn danger-text" id="profileLogoutBtn">Выйти</button></div>
     </section>
@@ -268,20 +267,20 @@
       <span class="mut" style="font-size:12.5px">сам выберу, кому звонить: сначала просроченные напоминания, потом свежие со скриптом</span>
     </div>
     ${due.length?`<div class="panel due-panel" style="margin-bottom:16px">
-      <div class="panel-h"><h3>🔔 Пора перезвонить</h3><span class="sub">${plural(due.length,'лид ждёт','лида ждут','лидов ждут')} звонка</span></div>
+      <div class="panel-h"><h3>План звонков</h3><span class="sub">${plural(due.length,'напоминание','напоминания','напоминаний')} на сейчас</span></div>
       <div class="panel-b due-list">${due.slice(0,8).map(x=>{
         const overdue=new Date(nextCallOf(x))<new Date(new Date().setHours(0,0,0,0));
         return `<button class="due-item" data-open="${esc(x.id)}">
           <span class="d-day ${overdue?'late':''}">${fmtDay(nextCallOf(x))}</span>
           <span class="d-co">${esc(x.company)}</span>
-          <span class="d-note">${esc(String(x.notes||'').slice(0,36))}</span>
+          <span class="d-note">${window.VC.callsOf(x).length?'Повторный звонок':'Первичный звонок · истории нет'}</span>
           ${x.phone?`<span class="d-ph">${esc(x.phone)}</span>`:''}
         </button>`;}).join('')}</div>
     </div>`:''}
     <div class="cols">
       <div class="panel"><div class="panel-h"><h3>Звонки за две недели</h3>
-        <span class="sub">${calls.length?plural(calls.length,'звонок','звонка','звонков')+' всего':'пишется сам, когда жмёшь «Набрать»'}</span></div>
-        <div class="panel-b">${barChart(callsByDay(14),'Ещё ни одного звонка. Нажми «Набрать» у любого лида — журнал начнёт заполняться сам.')}</div></div>
+        <span class="sub">${calls.length?plural(calls.length,'звонок','звонка','звонков')+' всего':'запись появляется после выбора итога'}</span></div>
+        <div class="panel-b">${barChart(callsByDay(14),'Журнал пуст. Открой карточку, позвони и сохрани итог разговора.')}</div></div>
       <div class="panel"><div class="panel-h"><h3>Воронка</h3><span class="sub">${p.length} лидов</span></div>
         <div class="panel-b">${funnelBars()}</div></div>
     </div>
@@ -302,7 +301,7 @@
   };
 
   V.projects=()=>{
-    const chips=[['all','Все'],['new','Новые'],['work','В работе'],['callback','🔔 Перезвонить'],['redesign','Редизайн'],['creation','С нуля'],
+    const chips=[['all','Все'],['new','Новые'],['work','В работе'],['callback','🔔 План звонков'],['redesign','Редизайн'],['creation','С нуля'],
                  ['processed','Со скриптом'],['raw','Сырые'],['demo','С демкой'],['hot','Рейтинг 4.5+']];
     let list=DATA.projects.filter(p=>{
       if(pFilter==='all') return true;
@@ -322,7 +321,7 @@
     return `
     <div class="tbl-tools">
       ${chips.map(([k,l])=>`<button class="chip ${pFilter===k?'active':''}" data-filter="${k}">${l}</button>`).join('')}
-      <span class="mut count">${list.length} из ${DATA.projects.length}</span>
+      <span class="mut count">Показано ${Math.min(projectLimit,list.length)} из ${list.length}${list.length!==DATA.projects.length?' · всего '+DATA.projects.length:''}</span>
     </div>
     <div class="panel tbl-wrap"><table class="data leads"><thead><tr>
       <th class="c-co">Компания</th>
@@ -333,7 +332,7 @@
       <th class="c-ph">Телефон</th>
       <th class="c-dm">Демка</th>
     </tr></thead><tbody>
-      ${list.slice(0,300).map(p=>{
+      ${list.slice(0,projectLimit).map(p=>{
         const k=stageOf(p), n=window.VC.callsOf(p).length;
         const demoUrl=window.VC.safeHttpUrl(p.demo);
         return `<tr data-id="${esc(p.id)}" class="${STAGES[k].cls}">
@@ -351,12 +350,12 @@
         <td class="c-nt">${canEdit?`<input class="note-in" data-note="${esc(p.id)}" value="${esc(p.notes||'')}" placeholder="пара слов…" maxlength="120" />`
           :`<span class="mut">${esc(p.notes||'—')}</span>`}</td>
         <td class="c-ra">${p.rating?`<span class="rate"><b>${esc(rate(p.rating))}</b>${p.reviews?`<span class="rv">${esc(p.reviews)}&nbsp;отз.</span>`:''}</span>`:'<span class="mut">—</span>'}</td>
-        <td class="c-ph">${p.phone?`<button class="mini call" data-call="${esc(p.id)}" title="Набрать ${esc(p.phone)}">📞 ${esc(p.phone)}</button>`:'<span class="mut">нет</span>'}</td>
+        <td class="c-ph">${p.phone?(canEdit?`<button class="mini call" data-call="${esc(p.id)}" title="Набрать ${esc(p.phone)}">📞 ${esc(p.phone)}</button>`:esc(p.phone)):'<span class="mut">нет</span>'}</td>
         <td class="c-dm">${demoUrl?`<a class="mini go" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Открыть ↗</a>`
-          :(p.gen_prompt?`<button class="mini make" data-demo="${esc(p.id)}">Создать</button>`
+          :(p.gen_prompt&&canEdit?`<button class="mini make" data-demo="${esc(p.id)}">Создать</button>`
           :`<span class="mut" title="сначала нужен промпт из AI-разбора Rockefeller">Нужен AI-разбор</span>`)}</td>
       </tr>`;}).join('')}
-    </tbody></table></div>`;
+    </tbody></table></div>${list.length>projectLimit?'<button class="btn" id="projectsMore" style="margin-top:12px">Показать ещё 300</button>':''}`;
   };
 
   /* «Дозвон» = человек взял трубку (любой итог кроме «не взяли»). */
@@ -412,6 +411,7 @@
     const byPerson={};
     calls.forEach(c=>{ const k=c.by||'—'; byPerson[k]=(byPerson[k]||0)+1; });
     return `
+    <details class="panel telephony-help"><summary class="panel-b">Как звонить с виртуального номера</summary><div class="panel-b"><p>«Набрать» открывает программу для звонков, назначенную в Windows для ссылок tel:. Сам Workspace пока не подключён к оператору и не получает длительность, запись или подтверждение соединения.</p><p>Нужен постоянный голосовой номер с исходящими звонками и SIP. В кабинете оператора назначь менеджеру отдельную внутреннюю линию, настрой его приложение по инструкции оператора и выбери купленный номер как исходящий Caller ID. Затем назначь это приложение для TEL и проверь звонок на свой номер.</p><p>Номер для разового получения SMS не подходит. Если приложение не открылось, скопируй номер из карточки и набери вручную. Итог разговора здесь отмечает менеджер.</p><a class="link" href="https://zadarma.com/ru/support/instructions/windows/microsip/" target="_blank" rel="noopener noreferrer">Пример настройки SIP-приложения у оператора ↗</a></div></details>
     <div class="grid kpis">
       ${kpi('Сегодня',today,ICONS.calls)}
       ${kpi('За 7 дней',week,ICONS.calls)}
@@ -419,8 +419,8 @@
       ${kpi('Всего в журнале',calls.length,ICONS.dashboard)}
     </div>
     <div class="panel"><div class="panel-h"><h3>Звонки за две недели</h3>
-      <span class="sub">журнал пишется, когда жмёшь «Набрать»</span></div>
-      <div class="panel-b">${barChart(callsByDay(14),'Журнал пуст. Он заполнится сам — жми «Набрать» в списке лидов.')}</div></div>
+      <span class="sub">итоги подтверждает менеджер</span></div>
+      <div class="panel-b">${barChart(callsByDay(14),'Журнал пуст. После разговора сохрани его итог в карточке лида.')}</div></div>
     <div class="cols" style="margin-top:16px">
       <div class="panel"><div class="panel-h"><h3>История</h3><span class="sub">последние 40 · ✕ убирает случайную запись</span></div>
         ${calls.length?`<table class="data"><thead><tr><th>Компания</th><th>Итог</th><th>Кто</th><th>Когда</th><th></th></tr></thead><tbody>
@@ -445,15 +445,16 @@
       return `<div class="hint"><span>🔒</span><div>Раздел «Деньги» видят только основатель и администратор.</div></div>`;
     const paid=DATA.projects.filter(p=>stageOf(p)==='paid');
     const agreed=DATA.projects.filter(p=>stageOf(p)==='agreed');
-    const withAmt=paid.filter(p=>moneyOf(p)&&Number(moneyOf(p).amount)>0);
+    const withAmt=paid.filter(p=>hasAmount(moneyOf(p)));
     const noAmt=paid.length-withAmt.length;
-    const total=sum(withAmt,p=>Number(moneyOf(p).amount));
-    const mgrTotal=sum(withAmt,p=>Number(moneyOf(p).amount)*pctOf(moneyOf(p))/100);
+    const total=sum(withAmt,p=>moneySplit(moneyOf(p)).minor)/100;
+    const mgrTotal=sum(withAmt,p=>moneySplit(moneyOf(p)).managerMinor)/100;
+    const studioTotal=sum(withAmt,p=>moneySplit(moneyOf(p)).studioMinor)/100;
     const avg=withAmt.length?total/withAmt.length:0;
     const m30=sum(withAmt.filter(p=>{
-      const t=moneyOf(p).paid_at||p.updated_at;
-      return t&&(Date.now()-new Date(t).getTime())<30*864e5;
-    }),p=>Number(moneyOf(p).amount));
+      const t=window.WorkspaceCore.timestamp(moneyOf(p).paid_at), age=t===null?null:Date.now()-t;
+      return age!==null&&age>=0&&age<30*864e5;
+    }),p=>moneySplit(moneyOf(p)).minor)/100;
     /* прогноз: сколько денег «сидит» в воронке с учётом вероятности стадии */
     const W={contacted:.05,demo_sent:.2,agreed:.6};
     const fc=avg?Object.entries(W).reduce((s,[k,w])=>s+DATA.projects.filter(p=>stageOf(p)===k).length*w*avg,0):0;
@@ -465,21 +466,21 @@
       months.push({key:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),d:MN[d.getMonth()],v:0});
     }
     withAmt.forEach(p=>{
-      const t=moneyOf(p).paid_at||p.updated_at; if(!t) return;
+      const t=moneyOf(p).paid_at; if(!window.WorkspaceCore.timestamp(t)) return;
       const m=months.find(x=>x.key===String(t).slice(0,7));
       if(m) m.v+=Number(moneyOf(p).amount);
     });
     const bars=months.map(m=>({d:m.d,n:Math.round(m.v/1000),full:m.d+': '+fmtMoney(m.v)}));
     const dealRow=p=>{
-      const m=moneyOf(p)||{}, amt=Number(m.amount)||0, pct=pctOf(m);
+      const m=moneyOf(p)||{}, known=hasAmount(m),amt=known?Number(m.amount):null,pct=pctOf(m),parts=known?moneySplit(m):null;
       return `<tr data-id="${esc(p.id)}">
         <td><b>${esc(p.company)}</b><div class="csub mut">${esc(String(p.niche||'').slice(0,32))}</div></td>
         <td>${stagePill(p)}</td>
-        <td><input class="note-in amt" data-amt="${esc(p.id)}" value="${amt||''}" placeholder="сумма ₽" inputmode="numeric" /></td>
-        <td><input class="note-in pct" data-pct="${esc(p.id)}" value="${pct}" inputmode="numeric" /></td>
-        <td class="mut">${amt?fmtMoney(amt*pct/100):'—'}</td>
-        <td class="mut">${amt?fmtMoney(amt*(100-pct)/100):'—'}</td>
-        <td class="mut">${m.paid_at?fmtDay(m.paid_at):'—'}</td>
+        <td><input class="note-in amt" data-amt="${esc(p.id)}" value="${known?amt:''}" placeholder="сумма ₽" inputmode="decimal" aria-label="Сумма сделки: ${esc(p.company)}" /></td>
+        <td><input class="note-in pct" data-pct="${esc(p.id)}" value="${pct}" inputmode="decimal" aria-label="Процент менеджеру: ${esc(p.company)}" /></td>
+        <td class="mut">${parts?fmtMoney(parts.managerMinor/100):'—'}</td>
+        <td class="mut">${parts?fmtMoney(parts.studioMinor/100):'—'}</td>
+        <td>${stageOf(p)==='paid'?`<input type="date" class="date-in" data-paid-date="${esc(p.id)}" aria-label="Дата оплаты: ${esc(p.company)}" value="${m.paid_at?esc(String(m.paid_at).slice(0,10)):''}" max="${dayKey(new Date())}" />`:'—'}</td>
       </tr>`;
     };
     return `
@@ -487,8 +488,8 @@
       ${kpi('Выручка за всё время',fmtMoney(total),ICONS.money,withAmt.length?plural(withAmt.length,'сделка','сделки','сделок'):'проставь суммы сделок')}
       ${kpi('За 30 дней',fmtMoney(m30),ICONS.money)}
       ${kpi('Средний чек',fmtMoney(avg),ICONS.dashboard)}
-      ${kpi('Менеджеру',fmtMoney(mgrTotal),ICONS.team,'тебе '+fmtMoney(total-mgrTotal))}
-      ${kpi('Сидит в воронке',fmtMoney(fc),ICONS.projects,avg?'прогноз по стадиям':'нужен средний чек')}
+      ${kpi('Доля менеджера',fmtMoney(mgrTotal),ICONS.access,'доля студии '+fmtMoney(studioTotal))}
+      ${kpi('Оценка воронки',avg?fmtMoney(fc):'—',ICONS.projects,avg?'сценарий с условными весами':'нужен средний чек')}
     </div>
     ${noAmt?`<div class="hint"><span>✍️</span><div><b>${plural(noAmt,'оплаченная сделка','оплаченные сделки','оплаченных сделок')} без суммы.</b> Впиши суммы в таблице ниже — без них выручка и прогноз считаются не полностью.</div></div>`:''}
     <div class="cols">
@@ -497,8 +498,8 @@
       <div class="panel"><div class="panel-h"><h3>Как считается</h3></div>
         <div class="panel-b mut" style="font-size:12.5px;line-height:1.7">
           Доля менеджера по умолчанию — ${window.VC.CONFIG.managerPercent}%, в каждой сделке можно поправить.<br>
-          «Сидит в воронке» = связались ×5% + демка ушла ×20% + согласовано ×60%, помноженные на средний чек.<br>
-          Менеджер этот раздел не видит — только основатель и администратор.
+          Оценка воронки = связались ×5% + демка ушла ×20% + согласовано ×60%, помноженные на средний чек. Это условный сценарий, а не измеренная вероятность продажи.<br>
+          Доли рассчитаны до расходов и налогов. Оплаты без подтверждённой даты не попадают в месячный график. Банковские поступления и выплаты сотрудникам здесь не сверяются.
         </div></div>
     </div>
     <div class="panel" style="margin-top:16px">
@@ -514,14 +515,14 @@
 
   /* ---------- AI-тренер ---------- */
   const TR={ tab:'live', leadId:'', lines:[], hints:[], auto:true, listening:false,
-             chat:[], difficulty:'занятой', tts:true, review:'', lastHintLine:0, lastHintAt:0, busy:false };
+             chat:[], difficulty:'занятой', tts:false, review:'', reviewResult:'',reviewMessage:'',speechError:'',draft:'',manualDraft:'',lastHintLine:0,lastHintAt:0,busy:false,epoch:0 };
   let SREC=null;
 
-  const aiOn=()=>window.VC.CONFIG.aiActive===true;
+  const aiOn=()=>window.VC.CONFIG.aiActive===true&&USER?.can?.edit===true;
   const sttOn=()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition);
   const trLead=()=>DATA.projects.find(x=>String(x.id)===String(TR.leadId))||null;
-  const leadCtx=p=>p?{ niche:String(p.niche||'').slice(0,80), city:p.city||'', issues:String(p.issues||'').slice(0,600),
-                       script:String(p.call_script||'').slice(0,4000) }:{ niche:'', city:'', issues:'', script:'' };
+  const leadCtx=p=>p?{ niche:String(p.niche||'').slice(0,80), city:String(p.city||'').slice(0,80), issues:String(p.issues||'').slice(0,600),
+                       script:String(p.call_script||'').slice(0,4000),context:String(p.context||'').slice(0,1800) }:{ niche:'', city:'', issues:'', script:'',context:'' };
 
   function speak(t){
     if(!TR.tts) return;
@@ -531,9 +532,8 @@
   function leadSelect(id){
     const opts=DATA.projects
       .filter(p=>p.call_script||p.issues||p.phone)
-      .slice(0,200)
       .map(p=>`<option value="${esc(p.id)}"${String(p.id)===String(TR.leadId)?' selected':''}>${esc(p.company)}${p.call_script?' · скрипт':''}</option>`).join('');
-    return `<select id="${id}" class="tr-lead"><option value="">— без привязки к лиду —</option>${opts}</select>`;
+    return `<select id="${id}" class="tr-lead" aria-label="Лид для тренировки" ${TR.busy?'disabled':''}><option value="">— без привязки к лиду —</option>${opts}</select>`;
   }
 
   V.trainer=()=>{
@@ -542,7 +542,7 @@
       <div class="tbl-tools">
         ${tabs.map(([k,l])=>`<button class="chip ${TR.tab===k?'active':''}" data-ttab="${k}">${l}</button>`).join('')}
       </div>
-      ${aiOn()?'':`<div class="hint"><span>🔌</span><div><b>AI-функции тренера отключены до production-проверки Vertux Shield.</b> Live-транскрипция работает без них. Подсказки, разбор и тренажёр включаются отдельным проверенным релизом; одного активного webhook n8n недостаточно.</div></div>`}`;
+      <div class="hint"><div><b>${aiOn()?'Сервис тренера готов к запросам.':'AI-тренер пока не подключён.'}</b> ${aiOn()?'Ответ и разбор появятся после запроса.':'Можно подготовить текст разговора или скрипт. Для ответа ИИ требуется подключённый сервис.'} <button class="btn" id="trCheck">Проверить подключение</button><span class="status-line" id="trCheckMsg" role="status"></span></div></div>`;
 
     if(TR.tab==='live') return head+`
       ${sttOn()?'':'<div class="hint"><span>⚠️</span><div>Этот браузер не умеет распознавать речь — нужен Chrome или Edge.</div></div>'}
@@ -550,7 +550,7 @@
         ${leadSelect('trLeadSel')}
         <button class="btn ${TR.listening?'':'gold'}" id="trMic" ${sttOn()?'':'disabled'}>${TR.listening?'⏹ Стоп':'🎙 Начать слушать'}</button>
         <label class="mut" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="trAuto" ${TR.auto?'checked':''}/> подсказки сами</label>
+          <input type="checkbox" id="trAuto" ${TR.auto?'checked':''} ${aiOn()?'':'disabled'}/> подсказки сами</label>
         <button class="btn" id="trHintBtn" ${aiOn()?'':'disabled'}>Подсказку!</button>
         ${TR.lines.length?`<button class="btn" id="trToReview">→ Разобрать этот звонок</button>`:''}
       </div>
@@ -558,7 +558,8 @@
         <div class="panel"><div class="panel-h"><h3>Что слышу</h3><span class="sub" id="trState">${TR.listening?'слушаю…':'микрофон выключен'}</span></div>
           <div class="panel-b transcript" id="trTranscript">${TR.lines.map(l=>`<div class="tline">${esc(l)}</div>`).join('')}
             <div class="tline tint" id="trInterim"></div>
-            ${TR.lines.length?'':'<div class="empty" id="trEmpty"><div class="e-ic">🎙</div><div>Нажми «Начать слушать», положи телефон на громкую — и говори. Я записываю обе стороны с микрофона.</div></div>'}</div></div>
+            ${TR.lines.length?'':'<div class="empty" id="trEmpty"><div>Распознаётся звук выбранного микрофона. При звонке в гарнитуре голос собеседника может быть не слышен. Можно добавлять реплики текстом.</div></div>'}</div>
+          <div class="panel-b"><p class="status-line" id="trSpeechError" role="status">${esc(TR.speechError)}</p><div class="tr-manual"><label><span class="field-label">Реплика из разговора</span><textarea id="trManual" rows="2" maxlength="2000" placeholder="Клиент: у нас уже есть сайт…">${esc(TR.manualDraft)}</textarea></label><button class="btn" id="trAddLine">Добавить</button></div></div></div>
         <div class="panel"><div class="panel-h"><h3>Суфлёр</h3><span class="sub">что ответить</span></div>
           <div class="panel-b" id="trHints">${TR.hints.length?TR.hints.map(h=>`<div class="hint-card">${esc(h)}</div>`).join('')
             :'<div class="empty"><div class="e-ic">💡</div><div>Подсказки появятся по ходу разговора</div></div>'}</div></div>
@@ -573,13 +574,13 @@
       <div class="cols">
         <div class="panel"><div class="panel-h"><h3>Транскрипт звонка</h3><span class="sub">из Fireflies или live-режима</span></div>
           <div class="panel-b">
-            <textarea id="trText" rows="12" placeholder="Вставь сюда текст разговора…">${esc(TR.review)}</textarea>
+            <textarea id="trText" rows="12" maxlength="12000" aria-label="Текст разговора для разбора" placeholder="Вставь сюда текст разговора…">${esc(TR.review)}</textarea>
             <div class="row-inline" style="margin-top:10px">
-              <button class="btn gold" id="trReviewBtn" ${aiOn()?'':'disabled'}>Разобрать</button>
-              <span class="mut" id="trReviewMsg" style="font-size:12.5px"></span>
+              <button class="btn gold" id="trReviewBtn" ${aiOn()&&!TR.busy?'':'disabled'}>${TR.busy?'Разбираю…':'Разобрать'}</button>
+              <span class="mut" id="trReviewMsg" style="font-size:12.5px" role="status">${esc(TR.reviewMessage)}</span>
             </div></div></div>
         <div class="panel"><div class="panel-h"><h3>Разбор</h3></div>
-          <div class="panel-b" id="trResult"><div class="empty"><div class="e-ic">🧾</div><div>Вставь транскрипт и нажми «Разобрать»</div></div></div></div>
+          <div class="panel-b" id="trResult">${TR.reviewResult?`<pre class="script">${esc(TR.reviewResult)}</pre>`:'<div class="empty"><div>Вставь транскрипт и нажми «Разобрать»</div></div>'}</div></div>
       </div>
       ${reviews.length?`<div class="panel" style="margin-top:16px"><div class="panel-h"><h3>Прошлые разборы: ${esc(p.company)}</h3><span class="sub">видно, растёт ли качество</span></div>
         <div class="panel-b">${reviews.slice().reverse().map(r=>`<details class="rev"><summary>${esc(fmtDay(r.at))} · ${esc(String(r.text||'').split('\n')[0].slice(0,70))}</summary><pre class="script" style="margin-top:8px">${esc(r.text)}</pre></details>`).join('')}</div></div>`:''}`;
@@ -589,11 +590,11 @@
     return head+`
     <div class="row-inline" style="margin-bottom:14px">
       ${leadSelect('trLeadSel')}
-      <select id="trDiff">${['лояльный','занятой','жёсткий'].map(d=>`<option${d===TR.difficulty?' selected':''}>${d}</option>`).join('')}</select>
+      <select id="trDiff" aria-label="Характер клиента" ${TR.busy?'disabled':''}>${['лояльный','занятой','жёсткий'].map(d=>`<option${d===TR.difficulty?' selected':''}>${d}</option>`).join('')}</select>
       <label class="mut" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="trTts" ${TR.tts?'checked':''}/> озвучивать клиента</label>
-      ${TR.chat.length?`<button class="btn" id="trDebrief" ${aiOn()?'':'disabled'}>Завершить и получить разбор</button>
-        <button class="btn" id="trReset">Заново</button>`:''}
+      ${TR.chat.length?`<button class="btn" id="trDebrief" ${aiOn()&&!TR.busy?'':'disabled'}>Завершить и получить разбор</button>
+        <button class="btn" id="trReset" ${TR.busy?'disabled':''}>Заново</button>`:''}
     </div>
     <div class="panel"><div class="panel-h"><h3>Тренировочный звонок</h3>
       <span class="sub">${trLead()?esc(trLead().company)+' · ':''}клиент: ${esc(TR.difficulty)}</span></div>
@@ -601,14 +602,14 @@
         <div class="chat" id="trChat">${TR.chat.length?TR.chat.map(m=>`<div class="msg ${m.who}">${esc(m.text)}</div>`).join('')
           :'<div class="empty"><div class="e-ic">🥊</div><div>Поздоровайся — как в настоящем звонке. ИИ сыграет клиента из выбранной ниши, а в конце разберёт, как ты отработал.</div></div>'}</div>
         <div class="row-inline" style="margin-top:12px">
-          <input id="trMsg" placeholder="твоя реплика…" style="flex:1" ${aiOn()?'':'disabled'} />
-          ${sttOn()?`<button class="btn" id="trSay" title="сказать голосом" ${aiOn()?'':'disabled'}>🎙</button>`:''}
-          <button class="btn gold" id="trSend" ${aiOn()?'':'disabled'}>Сказать</button>
+          <input id="trMsg" aria-label="Твоя реплика клиенту" maxlength="1200" placeholder="твоя реплика…" value="${esc(TR.draft)}" style="flex:1" ${aiOn()&&!TR.busy?'':'disabled'} />
+          ${sttOn()?`<button class="btn" id="trSay" title="сказать голосом" ${aiOn()&&!TR.busy?'':'disabled'}>🎙</button>`:''}
+          <button class="btn gold" id="trSend" ${aiOn()&&!TR.busy?'':'disabled'}>${TR.busy?'Клиент отвечает…':'Сказать'}</button>
         </div></div></div>`;
   };
 
   function trAppendLine(text){
-    TR.lines.push(text);
+    TR.lines.push(String(text).slice(0,2000));TR.lines=TR.lines.slice(-100);
     const box=$('#trTranscript');
     if(box){
       const e=$('#trEmpty'); if(e) e.remove();
@@ -616,6 +617,8 @@
       box.insertBefore(d, $('#trInterim'));
       box.scrollTop=box.scrollHeight;
     }
+    const toReview=$('#trToReview');
+    if(!toReview&&view==='trainer'&&TR.tab==='live') render();
     if(TR.auto && aiOn() && TR.lines.length-TR.lastHintLine>=2 && Date.now()-TR.lastHintAt>9000) trHint();
   }
 
@@ -625,13 +628,14 @@
     const hb=$('#trHintBtn'); if(hb){ hb.disabled=true; hb.textContent='думаю…'; }
     try{
       const ctx=leadCtx(trLead());
-      const j=await window.VC.aiCall('suffler',{ transcript:TR.lines.slice(-14).join('\n'), ...ctx });
+      const j=await window.VC.aiCall('suffler',{ transcript:TR.lines.slice(-14).join('\n').slice(-6000), ...ctx });
       TR.hints.unshift(j.text||'—'); TR.hints=TR.hints.slice(0,6);
       const hv=$('#trHints'); if(hv) hv.innerHTML=TR.hints.map(h=>`<div class="hint-card">${esc(h)}</div>`).join('');
     }catch(e){
       const hv=$('#trHints'); if(hv) hv.innerHTML=`<div class="hint-card bad">суфлёр молчит: ${esc(e.message||e)}</div>`+hv.innerHTML;
     }finally{
       TR.busy=false;
+      if(view==='trainer'&&TR.tab!=='live') render();
       const hb2=$('#trHintBtn'); if(hb2){ hb2.disabled=!aiOn(); hb2.textContent='Подсказку!'; }
     }
   }
@@ -639,9 +643,11 @@
   function trStartSTT(){
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR) return;
-    SREC=new SR();
-    SREC.lang='ru-RU'; SREC.continuous=true; SREC.interimResults=true;
-    SREC.onresult=e=>{
+    TR.speechError='';
+    const recognition=new SR();SREC=recognition;
+    recognition.lang='ru-RU'; recognition.continuous=true; recognition.interimResults=true;
+    recognition.onresult=e=>{
+      if(SREC!==recognition||!TR.listening) return;
       let interim='';
       for(let i=e.resultIndex;i<e.results.length;i++){
         const r=e.results[i];
@@ -651,39 +657,53 @@
       const iv=$('#trInterim'); if(iv) iv.textContent=interim;
     };
     /* Chrome сам останавливается на тишине — перезапускаем, пока не нажали Стоп */
-    SREC.onend=()=>{ if(TR.listening){ try{ SREC.start(); }catch(e){} } };
-    SREC.onerror=ev=>{
-      if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){
-        TR.listening=false;
-        const st=$('#trState'); if(st) st.textContent='нет доступа к микрофону — разреши в браузере';
-        const mb=$('#trMic'); if(mb){ mb.textContent='🎙 Начать слушать'; mb.classList.add('gold'); }
-      }
+    recognition.onend=()=>{if(TR.listening&&SREC===recognition)setTimeout(()=>{if(TR.listening&&SREC===recognition){try{recognition.start();}catch(_){speechFailure('Распознавание остановлено. Добавь текст вручную или запусти микрофон снова.');}}},400);};
+    function speechFailure(message){
+      TR.speechError=message;TR.listening=false;trStopSTT();
+      if(view==='trainer')render();
+    }
+    recognition.onerror=ev=>{
+      if(ev.error==='no-speech')return;
+      const messages={'not-allowed':'Нет доступа к микрофону. Добавь текст вручную или разреши микрофон в настройках приложения.','service-not-allowed':'Распознавание недоступно в этом приложении. Добавляй реплики текстом.','audio-capture':'Микрофон не найден. Проверь гарнитуру или добавь текст вручную.',network:'Сервис распознавания речи не отвечает. Добавляй реплики текстом.'};
+      speechFailure(messages[ev.error]||'Распознавание остановлено. Можно продолжить текстом.');
     };
-    try{ SREC.start(); }catch(e){}
+    try{recognition.start();}catch(_){speechFailure('Не удалось запустить распознавание. Можно продолжить текстом.');}
   }
-  function trStopSTT(){ if(SREC){ try{ SREC.stop(); }catch(e){} SREC=null; } }
+  function trStopSTT(){const previous=SREC;SREC=null;if(previous){previous.onend=null;previous.onerror=null;try{previous.abort();}catch(_){}}}
 
   async function trRoleSend(text){
     text=String(text||'').trim();
     if(!text||TR.busy||!aiOn()) return;
     TR.busy=true;
+    const epoch=TR.epoch;
+    TR.draft='';
     TR.chat.push({who:'m',text:text});
     render();
     try{
       const ctx=leadCtx(trLead());
-      const j=await window.VC.aiCall('roleplay',{ history:TR.chat.slice(-14), difficulty:TR.difficulty, ...ctx });
+      const j=await window.VC.aiCall('roleplay',{ history:TR.chat.filter(m=>m.who==='m'||m.who==='c').slice(-14).map(m=>({...m,text:m.text.slice(0,1200)})), difficulty:TR.difficulty, ...ctx });
+      if(epoch!==TR.epoch)return;
       TR.chat.push({who:'c',text:j.text||'…'});
-      speak(j.text||'');
-    }catch(e){ TR.chat.push({who:'sys',text:'клиент завис: '+(e.message||e)}); }
-    finally{ TR.busy=false; render(); const i=$('#trMsg'); if(i) i.focus(); }
+      if(view==='trainer'&&TR.tab==='roleplay')speak(j.text||'');
+    }catch(e){if(epoch===TR.epoch){TR.chat.pop();TR.draft=text;TR.chat.push({who:'sys',text:e.message||'Клиент не ответил. Повтори запрос.'});}}
+    finally{TR.busy=false;if(view==='trainer'){render();const i=$('#trMsg');if(i)i.focus();}}
   }
 
   function wireTrainer(){
+    const check=$('#trCheck');
+    if(check)check.onclick=async()=>{check.disabled=true;$('#trCheckMsg').textContent=' Проверяю…';await window.VC.probeAI();if(view==='trainer'){render();$('#trCheckMsg').textContent=aiOn()?' Подключение доступно.':' Подключение не подтверждено. Обратись к владельцу Workspace.';}};
     $$('[data-ttab]').forEach(b=>b.onclick=()=>{
-      if(TR.tab==='live'&&TR.listening){ TR.listening=false; trStopSTT(); }
+      TR.listening=false;trStopSTT();if(window.speechSynthesis)window.speechSynthesis.cancel();
       TR.tab=b.dataset.ttab; render();
     });
-    const ls=$('#trLeadSel'); if(ls) ls.onchange=()=>{ TR.leadId=ls.value; render(); };
+    const ls=$('#trLeadSel'); if(ls) ls.onchange=()=>{
+      if((TR.chat.length||TR.lines.length||TR.review)&&!confirm('Сменить компанию и начать новую тренировку? Текущий черновик будет очищен.')){ls.value=TR.leadId;return;}
+      TR.listening=false;trStopSTT();TR.epoch++;TR.leadId=ls.value;TR.chat=[];TR.lines=[];TR.hints=[];TR.review='';TR.reviewResult='';TR.reviewMessage='';TR.draft='';TR.manualDraft='';TR.lastHintLine=0;TR.lastHintAt=0;render();
+    };
+    const manual=$('#trManual'),add=$('#trAddLine');
+    if(manual)manual.oninput=()=>{TR.manualDraft=manual.value;};
+    if(add)add.onclick=()=>{const t=manual.value.trim();if(!t)return;TR.manualDraft='';manual.value='';trAppendLine(t);};
+    const reviewText=$('#trText');if(reviewText)reviewText.oninput=()=>{TR.review=reviewText.value;};
     const mic=$('#trMic');
     if(mic) mic.onclick=()=>{
       TR.listening=!TR.listening;
@@ -698,51 +718,55 @@
     };
     const rb=$('#trReviewBtn');
     if(rb) rb.onclick=async()=>{
+      if(TR.busy)return;
       const txt=$('#trText').value.trim(), msg=$('#trReviewMsg'), out=$('#trResult');
       if(txt.length<40){ msg.textContent='слишком коротко — вставь весь разговор'; return; }
-      TR.review=txt;
+      TR.review=txt;TR.busy=true;TR.reviewResult='';TR.reviewMessage='Разбираю…';
+      out.textContent='';
       rb.disabled=true; msg.textContent='разбираю…';
       try{
         const p=trLead();
         const j=await window.VC.aiCall('review',{ transcript:txt.slice(0,12000), ...leadCtx(p) });
+        TR.reviewResult=j.text;
         out.innerHTML=`<pre class="script" style="max-height:none">${esc(j.text||'—')}</pre>`;
         msg.textContent='';
-        if(p){
-          const raw=(p.raw&&typeof p.raw==='object')?p.raw:{};
-          const reviews=(Array.isArray(raw.reviews)?raw.reviews:[]).slice(-9);
-          reviews.push({at:new Date().toISOString(),text:j.text||''});
-          await window.VC.saveRaw(p,{reviews:reviews});
-          msg.textContent='сохранено в карточку лида';
+        if(p&&USER?.can?.edit){
+          await window.VC.saveRaw(p,raw=>({reviews:[...(Array.isArray(raw.reviews)?raw.reviews:[]).slice(-9),{at:new Date().toISOString(),text:j.text||''}]}));
+          TR.reviewMessage='Разбор сохранён в карточку лида.';
+        }else{
+          TR.reviewMessage='Разбор готов. Выбери компанию для сохранения следующего разбора.';
         }
-      }catch(e){ msg.textContent='не вышло: '+(e.message||e); }
-      finally{ rb.disabled=!aiOn(); }
+      }catch(e){TR.reviewMessage=TR.reviewResult?'Разбор готов, но не сохранён в карточку. '+(e.message||e):String(e.message||e);}
+      finally{TR.busy=false;if(view==='trainer')render();}
     };
     const diff=$('#trDiff'); if(diff) diff.onchange=()=>{ TR.difficulty=diff.value; render(); };
     const tts=$('#trTts'); if(tts) tts.onchange=()=>{ TR.tts=tts.checked; };
     const send=$('#trSend'), msgIn=$('#trMsg');
+    if(msgIn)msgIn.oninput=()=>{TR.draft=msgIn.value;};
     if(send) send.onclick=()=>{ trRoleSend(msgIn.value); if(msgIn) msgIn.value=''; };
     if(msgIn) msgIn.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); trRoleSend(msgIn.value); msgIn.value=''; } };
     const say=$('#trSay');
     if(say) say.onclick=()=>{
       const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR) return;
-      const r=new SR(); r.lang='ru-RU'; r.interimResults=false;
+      trStopSTT();const r=new SR();SREC=r;r.lang='ru-RU'; r.interimResults=false;
       say.textContent='…говори'; say.disabled=true;
-      r.onresult=e=>{ const t=e.results[0][0].transcript; trRoleSend(t); };
-      r.onend=()=>{ say.textContent='🎙'; say.disabled=false; };
+      r.onresult=e=>{if(SREC!==r||view!=='trainer'||TR.tab!=='roleplay')return;const t=e.results[0][0].transcript;trRoleSend(t);};
+      r.onend=()=>{if(SREC===r)SREC=null;say.textContent='🎙';say.disabled=TR.busy||!aiOn();};
       r.onerror=()=>{ say.textContent='🎙'; say.disabled=false; };
       try{ r.start(); }catch(e){ say.textContent='🎙'; say.disabled=false; }
     };
     const db2=$('#trDebrief');
     if(db2) db2.onclick=async()=>{
-      if(TR.busy||TR.chat.length<2) return;
+      const history=TR.chat.filter(m=>m.who==='m'||m.who==='c').slice(-30).map(m=>({...m,text:m.text.slice(0,1200)}));
+      if(TR.busy||history.length<2) return;
       TR.busy=true; db2.disabled=true; db2.textContent='разбираю…';
       try{
-        const j=await window.VC.aiCall('debrief',{ history:TR.chat.slice(-30), difficulty:TR.difficulty, ...leadCtx(trLead()) });
+        const j=await window.VC.aiCall('debrief',{ history, difficulty:TR.difficulty, ...leadCtx(trLead()) });
         TR.chat.push({who:'coach',text:j.text||'—'});
       }catch(e){ TR.chat.push({who:'sys',text:'разбор не вышел: '+(e.message||e)}); }
-      finally{ TR.busy=false; render(); }
+      finally{ TR.busy=false;if(view==='trainer')render(); }
     };
-    const rst=$('#trReset'); if(rst) rst.onclick=()=>{ TR.chat=[]; render(); };
+    const rst=$('#trReset'); if(rst) rst.onclick=()=>{TR.epoch++;TR.chat=[];TR.draft='';if(window.speechSynthesis)window.speechSynthesis.cancel();render();};
     const chat=$('#trChat'); if(chat) chat.scrollTop=chat.scrollHeight;
   }
 
@@ -755,10 +779,10 @@
     return `
     <div class="hint"><span>📥</span><div>Кидай сюда <b>CSV</b> или <b>XLSX</b> — из 2GIS-парсера (сырьё) или из Рокфеллера (готовый список со скриптами). Формат определится сам, а перед записью покажу, что изменится.</div></div>
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-h"><h3>🧭 Автоматизация Rockefeller</h3><span class="sub">${plural(rawN,'сырой лид','сырых лида','сырых лидов')} в базе</span></div>
+      <div class="panel-h"><h3>Подготовка списка в Rockefeller</h3><span class="sub">${plural(rawN,'сырой лид','сырых лида','сырых лидов')} в базе</span></div>
       <div class="panel-b">
-        <div class="hint" style="margin:0"><span>🖥️</span><div><b>Основной путь сохраняет качество Rockefeller:</b> парсер → Rockefeller → готовый файл → проверка → импорт сюда. Локальный браузерный мост сможет пройти эти шаги в отдельном профиле Windows; n8n не подменяет Rockefeller собственной генерацией.</div></div>
-        <div class="mut" style="font-size:12px;margin-top:10px">Статус: проектируется безопасный мост. Пока просто выгрузи готовый файл Rockefeller и перетащи его в область ниже — этот сценарий уже работает.</div>
+        <p>Обработай список компаний в Rockefeller, выгрузи CSV или XLSX и проверь его здесь перед импортом. Автоматической отправки списка в Rockefeller пока нет.</p>
+        <details><summary>Шаблон Vertux: банкетные площадки и корпоративы</summary><p class="mut">Перед запуском укажи географию. Шаблон отделяет проверенные факты от гипотезы и готовит короткую карточку для звонка.</p><button class="btn" id="copyOutreachPrompt">Скопировать шаблон</button><pre class="script outreach-prompt">${esc(window.WorkspaceOutreach.banquetPrompt)}</pre></details>
       </div>
     </div>
     <div class="drop" id="drop">
@@ -788,6 +812,7 @@
             <div class="sc"><b>${plan.total}</b><span>сейчас в базе</span></div>
           </div>
           ${(stats.skipped||stats.dupes)?`<div class="mut" style="font-size:12.5px;margin-top:10px">Пропущено: ${stats.skipped} без названия, ${stats.dupes} дублей внутри файла.</div>`:''}
+          ${(plan.conflicts||[]).length?`<div class="hint"><div><b>Нужно уточнить совпадения: ${plan.conflicts.length}.</b> ${esc(plan.conflicts.map(p=>p.company).slice(0,6).join(', '))}. Эти строки будут пропущены. Добавь город, телефон или адрес источника; одинакового названия недостаточно для слияния.</div></div>`:''}
           <div class="dr-sec">Что делаем</div>
           <div class="modes">
             ${modeCard('merge','Умное слияние <span class="rec">рекомендую</span>',
@@ -824,12 +849,13 @@
   }
 
   async function handleFile(file){
+    IMP=null;
     const out=$('#impOut');
     out.innerHTML='<div class="panel" style="margin-top:16px"><div class="panel-b mut">Читаю файл…</div></div>';
     try{
       const hash=await window.VC.fileFingerprint(file);
       const previous=window.VC.findImported(hash);
-      if(previous) throw new Error('этот файл уже успешно импортировали на этом компьютере '+fmtDay(previous.at)+'. Повторная загрузка остановлена');
+      if(previous&&previous.mode==='merge') throw new Error('этот файл уже успешно импортировали на этом компьютере '+fmtDay(previous.at)+'. Повторная загрузка остановлена');
       const objs=await window.VC.readFileRows(file);
       if(!objs.length) throw new Error('файл пустой');
       const fmt=window.VC.detectFormat(objs);
@@ -866,7 +892,8 @@
       renderNav();
     }catch(e){
       msg.textContent='не вышло: '+(e.message||e); msg.style.color='var(--red)';
-      btn.disabled=false;
+      msg.textContent+=' Часть строк могла сохраниться. Выбери файл снова: план будет пересчитан по текущей базе.';
+      IMP=null;
     }
   }
 
@@ -878,17 +905,24 @@
     ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
     drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) handleFile(f); });
     if(IMP) renderPlan();
+    const cp=$('#copyOutreachPrompt');
+    if(cp) cp.onclick=async()=>{try{await navigator.clipboard.writeText(window.WorkspaceOutreach.banquetPrompt);cp.textContent='Шаблон скопирован';}catch(_){cp.textContent='Выдели и скопируй текст ниже';}};
   }
 
   /* ---------- звонки ---------- */
   const PENDING_CALL=new Map();
-  async function doCall(p){
-    if(!p.phone) return;
+  const OUTCOME_SAVING=new Set();
+  function prepareCall(p,kind='manual'){
     PENDING_CALL.set(String(p.id),{
-      at:new Date().toISOString(), by:(USER&&(USER.name||USER.email))||'—'
+      id:window.crypto.randomUUID(),at:new Date().toISOString(),by:(USER&&(USER.name||USER.email))||'—',by_id:USER?.id||null,kind
     });
     openProject(p.id);
-    window.location.href='tel:'+String(p.phone).replace(/[^\d+]/g,'');
+  }
+  async function doCall(p){
+    const phone=window.WorkspaceCore.phone(p.phone);
+    if(!phone){alert('Не удалось распознать телефон. Проверь номер в карточке.');return;}
+    if(!PENDING_CALL.has(String(p.id))) prepareCall(p,'dial');
+    window.location.href='tel:'+phone;
   }
   function renderCallsBadge(p){
     const tr=document.querySelector(`tr[data-id="${p.id}"] .co`); if(!tr) return;
@@ -898,25 +932,29 @@
     if(b){ b.textContent=n; b.title='звонков: '+n; }
   }
   async function setOutcome(p, key){
+    if(!OUTCOMES[key]||OUTCOME_SAVING.has(String(p.id))) return;
     const pending=PENDING_CALL.get(String(p.id));
     const last=lastCall(p);
     const msg=$('#outMsg');
     if(!pending&&!last){ if(msg) msg.textContent='сначала нажми «Набрать»'; return; }
-    const prev=last&&last.out;
+    OUTCOME_SAVING.add(String(p.id));
+    $$('.out').forEach(b=>b.disabled=true);
     try{
       if(pending){
         await window.VC.logCall(p,{...pending,out:key});
         PENDING_CALL.delete(String(p.id));
       }else{
-        last.out=key;
-        await window.VC.savePatch(p.id,{ raw:p.raw });
+        await window.VC.saveRaw(p,raw=>({calls:(raw.calls||[]).map(c=>(last.id?c.id===last.id:c.at===last.at)?{...c,out:key}:c)}));
       }
     }catch(e){
-      if(last&&!pending) last.out=prev;
       if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
+      OUTCOME_SAVING.delete(String(p.id));
+      $$('.out').forEach(b=>b.disabled=false);
       return;
     }
+    let warning='';
     try{
+      if(key!=='callback'&&isDue(p)) await window.VC.saveRaw(p,{next_call:null,next_call_meta:null});
       const target=OUTCOMES[key].stage;
       if(target){
         const now=FUNNEL.indexOf(stageOf(p)), next=FUNNEL.indexOf(target);
@@ -927,16 +965,20 @@
           paintStage(p);
         }
       }
-    }catch(e){ console.warn('итог звонка сохранён, стадия не обновилась',e); }
+    }catch(e){ warning='Итог звонка сохранён, но стадия или напоминание не обновились. Обнови карточку.'; }
+    OUTCOME_SAVING.delete(String(p.id));
     renderCallsBadge(p);
+    render();renderNav();
     openProject(p.id);
+    if($('#outMsg')) $('#outMsg').textContent=warning||(key==='callback'?'Выбери дату следующего звонка ниже.':'Итог сохранён.');
   }
 
   /* ---------- демки ---------- */
   function openDemoModal(p){
+    lastModalFocus=document.activeElement;
     const m=$('#modal');
     const currentDemoUrl=window.VC.safeHttpUrl(p.demo);
-    m.innerHTML=`<div class="modal-card">
+    m.innerHTML=`<div class="modal-card" role="dialog" aria-modal="true" aria-label="Демка компании">
       <button class="dr-close" data-x>✕</button>
       <h3 style="margin:0 0 4px">Демка для «${esc(p.company)}»</h3>
       <div class="mut" style="font-size:12.5px;margin-bottom:16px">Три шага: скопировал промпт → сгенерил сайт → вставил ссылку сюда.</div>
@@ -952,7 +994,7 @@
       <div class="step"><span class="sn">3</span><div style="flex:1">
         <b>Вставь ссылку на готовую демку</b>
         <input id="mLink" placeholder="https://…" value="${esc(currentDemoUrl)}" style="margin-top:8px" />
-        <div class="mut" style="font-size:12px;margin-top:6px">Сохраню ссылку и переведу лида в стадию «демка отправлена».</div>
+        <div class="mut" style="font-size:12px;margin-top:6px">Сохраню ссылку. После фактической отправки клиенту отметь стадию «демка ушла» в карточке.</div>
       </div></div>
       <div class="row-inline" style="margin-top:18px">
         <button class="btn gold" id="mSave">Сохранить демку</button>
@@ -961,6 +1003,7 @@
       </div>
     </div>`;
     m.classList.add('open');
+    $('[data-x]',m).focus();
     $$('[data-x]',m).forEach(b=>b.onclick=closeModal);
     const cp=$('#mCopy');
     if(cp) cp.onclick=async()=>{
@@ -975,16 +1018,12 @@
       try{
         await window.VC.saveDemo(p.id, link||null);
         p.demo=link||null;
-        if(link && FUNNEL.indexOf(stageOf(p))<FUNNEL.indexOf('demo_sent')){
-          await window.VC.saveStage(p.id,'demo_sent',STAGES.demo_sent.pr);
-          p.stage='demo_sent'; p.progress=STAGES.demo_sent.pr;
-        }
         closeModal(); render();
         $('#drawer').classList.contains('open') && openProject(p.id);
       }catch(e){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
     };
   }
-  function closeModal(){ const m=$('#modal'); m.classList.remove('open'); m.innerHTML=''; }
+  function closeModal(){ const m=$('#modal');if(!m.classList.contains('open'))return;m.classList.remove('open');m.innerHTML='';if(lastModalFocus?.isConnected)lastModalFocus.focus(); }
 
   /* ---------- drawer ---------- */
   function openProject(id){
@@ -1016,18 +1055,19 @@
           :`<div class="dr-sec">Стадия</div><div>${stagePill(p)}</div>`}
 
         ${canEdit&&p.phone?`<div class="dr-sec">Звонок</div>
-          <div class="row-inline"><button class="btn gold" id="callBtn">📞 Набрать ${esc(p.phone)}</button></div>
+          <div class="row-inline"><button class="btn gold" id="callBtn">Набрать ${esc(p.phone)}</button><button class="btn" id="copyPhone">Скопировать номер</button><button class="btn" id="manualCall">Записать ручной звонок</button></div>
+          <p class="status-line">Номер откроется в телефонном приложении. Соединение и длительность Workspace не проверяет.</p>
           <div id="outcomeBox" class="outcomes${(pending||last)?' live':''}">
             <div class="mut" style="font-size:12px;margin:10px 0 8px">Чем закончился звонок?</div>
             <div class="out-row">${Object.entries(OUTCOMES).map(([k,v])=>
               `<button class="out ${!pending&&last&&last.out===k?'on':''}" data-out="${k}">${v.ic} ${v.label}</button>`).join('')}</div>
-            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${pending?'номер передан Windows · запись появится после выбора итога':last?'последний: '+esc(ago(last.at)):''}</div>
+            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${pending?'Запись появится после выбора итога фактического звонка.':last?'последний: '+esc(ago(last.at)):''}</div>
           </div>`:''}
 
-        ${canEdit?`<div class="dr-sec">Перезвонить</div>
+        ${canEdit?`<div class="dr-sec">Запланировать звонок</div>
           ${nextCallOf(p)?`<div class="row-inline">
               <span class="pill ${isDue(p)?'s-agr':'s-cont'}"><i></i>🔔 ${fmtDay(nextCallOf(p))}${isDue(p)?' — пора':''}</span>
-              <button class="btn" id="ncClear">Убрать</button>
+              <button class="btn" id="ncClear">Снять напоминание</button>
             </div>`
           :`<div class="row-inline">
               <button class="btn" data-nc="1">Завтра</button>
@@ -1035,10 +1075,10 @@
               <button class="btn" data-nc="7">Через неделю</button>
               <input type="date" id="ncDate" class="date-in" />
             </div>`}
-          <div id="ncMsg" class="mut" style="font-size:12px;margin-top:6px">попадёт в «Пора перезвонить» на дашборде</div>`:''}
+          <div id="ncMsg" class="mut" style="font-size:12px;margin-top:6px">${nextCallOf(p)&&!calls.length?'Звонков в журнале нет. Это сохранённое напоминание для первого контакта; оно не подтверждает прошлый звонок.':'Напоминание появится в плане звонков в указанную дату.'}</div>`:''}
 
         <div class="dr-sec">Контакты</div>
-        <div class="dr-row"><span class="l">Телефон</span><span class="v">${p.phone?`<a class="link" href="tel:${esc(p.phone)}">${esc(p.phone)}</a>`:'—'}</span></div>
+        <div class="dr-row"><span class="l">Телефон</span><span class="v">${window.WorkspaceCore.phone(p.phone)?`<a class="link" href="tel:${esc(window.WorkspaceCore.phone(p.phone))}">${esc(p.phone)}</a>`:esc(p.phone||'—')}</span></div>
         <div class="dr-row"><span class="l">Почта</span><span class="v">${esc(p.email||'—')}</span></div>
         <div class="dr-row"><span class="l">Адрес</span><span class="v">${esc(p.address||'—')}</span></div>
         <div class="dr-row"><span class="l">Сайт</span><span class="v">${siteUrl?`<a class="link" href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer">открыть ↗</a>`:'<span class="mut">нет сайта</span>'}</span></div>
@@ -1071,19 +1111,22 @@
           ${canEdit?`<button class="btn" id="aiReviewBtn">🧾 ИИ-разбор звонка</button>`:''}
         </div>
       </div>`;
-    $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
+    if(!$('#drawer').classList.contains('open'))lastDrawerFocus=document.activeElement;
+    $('#drawer').inert=false;$('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
     $('#drawerScrim').classList.add('open');
     const closeButton=$('[data-drawer-close]',$('#drawer'));
-    if(closeButton) closeButton.onclick=closeDrawer;
+    if(closeButton){closeButton.onclick=closeDrawer;closeButton.setAttribute('aria-label','Закрыть карточку');closeButton.focus();}
 
     const sel=$('#stageSel');
     if(sel) sel.onchange=()=>changeStage(p, sel.value, sel, $('#stageMsg'));
     const cb=$('#callBtn'); if(cb) cb.onclick=()=>doCall(p);
+    const manual=$('#manualCall'); if(manual) manual.onclick=()=>prepareCall(p);
+    const copy=$('#copyPhone'); if(copy) copy.onclick=async()=>{try{await navigator.clipboard.writeText(window.WorkspaceCore.phone(p.phone)||p.phone);copy.textContent='Номер скопирован';}catch(_){copy.textContent='Скопируй номер из контактов';}};
     $$('.out').forEach(b=>b.onclick=()=>setOutcome(p, b.dataset.out));
     /* напоминание «перезвонить» */
     const setNc=async iso=>{
       const msg=$('#ncMsg');
-      try{ await window.VC.saveRaw(p,{next_call:iso}); openProject(p.id); render(); }
+      try{ await window.VC.saveRaw(p,{next_call:iso,next_call_meta:iso?{kind:window.VC.callsOf(p).length?'followup':'first_contact',created_at:new Date().toISOString(),by_id:USER?.id||null}:null}); openProject(p.id); render(); renderNav(); }
       catch(e){ if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; } }
     };
     $$('[data-nc]').forEach(b=>b.onclick=()=>{
@@ -1111,13 +1154,12 @@
       }catch(e){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
     };
   }
-  function closeDrawer(){ $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden','true'); $('#drawerScrim').classList.remove('open'); }
+  function closeDrawer(){if(!$('#drawer').classList.contains('open'))return;$('#drawer').classList.remove('open');$('#drawer').inert=true;$('#drawer').setAttribute('aria-hidden','true');$('#drawerScrim').classList.remove('open');if(lastDrawerFocus?.isConnected)lastDrawerFocus.focus();}
 
   async function deleteCall(id, at){
     const p=DATA.projects.find(x=>String(x.id)===String(id)); if(!p) return false;
     if(!confirm('Убрать эту запись из журнала звонков?')) return false;
-    const calls=window.VC.callsOf(p).filter(c=>c.at!==at);
-    await window.VC.saveRaw(p,{calls:calls});
+    await window.VC.saveRaw(p,raw=>({calls:(Array.isArray(raw.calls)?raw.calls:[]).filter(c=>c.at!==at)}));
     return true;
   }
 
@@ -1147,12 +1189,7 @@
       await window.VC.saveStage(p.id, val, pr);
       p.stage=val; p.progress=pr;
       paintStage(p);
-      /* дата оплаты — для помесячной выручки в «Деньгах» */
-      if(val==='paid'){
-        const m=moneyOf(p)||{};
-        if(!m.paid_at) await window.VC.saveRaw(p,{money:{percent:pctOf(m),...m,paid_at:new Date().toISOString()}});
-      }
-      if(msg){ msg.textContent='сохранено'; msg.style.color='var(--green)'; }
+      if(msg){ msg.textContent=val==='paid'?'Стадия сохранена. Сумму и фактическую дату оплаты укажи в разделе «Деньги».':'сохранено'; msg.style.color='var(--green)'; }
     }catch(e){
       p.stage=prev; if(el) el.value=prev;
       if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
@@ -1169,13 +1206,19 @@
 
   function render(){
     renderViewChrome();
+    if(DATA._source==='offline'){
+      $('#view').innerHTML='<div class="panel"><div class="panel-b"><h2>База недоступна</h2><p>Не удалось получить данные. Проверь соединение и нажми «Обновить». Пустой экран не означает, что лиды удалены.</p></div></div>';
+      return;
+    }
     $('#view').innerHTML=(V[view]||V.dashboard)();
 
-    $$('tr[data-id]').forEach(tr=>tr.onclick=e=>{
-      if(e.target.closest('button,select,input,a')) return;
-      openProject(tr.dataset.id);
+    $$('tr[data-id]').forEach(tr=>{
+      tr.tabIndex=0;tr.setAttribute('aria-label','Открыть карточку: '+(DATA.projects.find(p=>String(p.id)===tr.dataset.id)?.company||''));
+      tr.onclick=e=>{if(!e.target.closest('button,select,input,a'))openProject(tr.dataset.id);};
+      tr.onkeydown=e=>{if(e.target===tr&&['Enter',' '].includes(e.key)){e.preventDefault();openProject(tr.dataset.id);}};
     });
-    $$('.chip[data-filter]').forEach(c=>c.onclick=()=>{ pFilter=c.dataset.filter; render(); });
+    $$('.chip[data-filter]').forEach(c=>c.onclick=()=>{pFilter=c.dataset.filter;projectLimit=300;render();});
+    const more=$('#projectsMore');if(more)more.onclick=()=>{projectLimit+=300;render();};
 
     $$('select[data-stage]').forEach(s=>{
       const p=DATA.projects.find(x=>String(x.id)===s.dataset.stage);
@@ -1213,11 +1256,10 @@
       let base=inp.value;
       const save=async()=>{
         if(inp.value===base) return;
-        const v=parseFloat(String(inp.value).replace(/\s/g,'').replace(',','.'));
         inp.classList.remove('bad');
         try{
-          const m=moneyOf(p)||{};
-          await window.VC.saveRaw(p,{money:apply(m,isFinite(v)?v:null)});
+          const v=window.WorkspaceCore.parseMoney(inp.value,{percent:attr==='data-pct'});
+          await window.VC.saveMoney(p,money=>apply(money,v));
           base=inp.value; render();
         }catch(e){ inp.classList.add('bad'); inp.title='не сохранилось: '+(e.message||e); }
       };
@@ -1226,6 +1268,13 @@
     });
     wireMoney('data-amt',(m,v)=>({percent:pctOf(m),...m,amount:v}));
     wireMoney('data-pct',(m,v)=>({...m,percent:v==null?window.VC.CONFIG.managerPercent:Math.min(100,Math.max(0,v))}));
+    $$('[data-paid-date]').forEach(inp=>inp.onchange=async()=>{
+      const p=DATA.projects.find(p=>String(p.id)===inp.dataset.paidDate),day=inp.value;
+      if(!day||day>dayKey(new Date())){inp.setCustomValidity('Укажи фактическую дату оплаты, не позже сегодняшней');inp.reportValidity();return;}
+      inp.setCustomValidity('');
+      try{await window.VC.saveMoney(p,money=>({...money,paid_at:day+'T12:00:00'}));render();}
+      catch(e){inp.title='Не сохранилось: '+e.message;inp.classList.add('bad');}
+    });
 
     if(view==='import') wireImport();
     if(view==='trainer') wireTrainer();
@@ -1246,6 +1295,11 @@
   }
   function go(id){
     const previous=view;
+    if(id==='money'&&!USER?.can?.finance) return;
+    if(previous==='trainer'&&id!=='trainer'){
+      TR.listening=false;trStopSTT();
+      if(window.speechSynthesis) window.speechSynthesis.cancel();
+    }
     view=id;
     if(view!=='projects') q='';
     if(SERVICE_SECTIONS.has(previous)&&SERVICE_SECTIONS.has(view)){
@@ -1262,12 +1316,7 @@
   /* Режим обзвона: кому звонить прямо сейчас. Приоритет:
      просроченные напоминания → новые со скриптом (рейтинг выше — раньше) → новые → «связались». */
   function nextLead(){
-    const P=DATA.projects.filter(p=>p.phone);
-    const cand=
-      P.filter(isDue).sort((a,b)=>String(nextCallOf(a)).localeCompare(String(nextCallOf(b))))[0]
-      ||P.filter(p=>stageOf(p)==='new'&&p.processed).sort((a,b)=>(Number(b.rating)||0)-(Number(a.rating)||0))[0]
-      ||P.filter(p=>stageOf(p)==='new')[0]
-      ||P.filter(p=>stageOf(p)==='contacted')[0];
+    const cand=window.WorkspaceCore.nextLead(DATA.projects);
     if(cand) openProject(cand.id);
     else alert('Некому звонить: ни напоминаний, ни новых лидов с телефоном.');
   }
@@ -1278,14 +1327,14 @@
     const visible= NAV.filter(n=>!n.finance||(USER&&USER.can&&USER.can.finance));
     const navItems=(items)=>items
       .map(n=>`
-      <a class="nav-item" data-id="${n.id}">
+      <a class="nav-item" href="#${n.id}" data-id="${n.id}" title="${n.label}">
         <span class="ic">${svg(ICONS[n.id])}</span><span class="lbl">${n.label}</span>
         ${n.id==='projects'&&raw?`<span class="badge" data-raw-badge title="Новые лиды без обработки — нажми, чтобы открыть">${raw}</span>`:''}
         ${n.id==='dashboard'&&due?`<span class="badge hot">${due}</span>`:''}
       </a>`).join('');
     $('#nav').innerHTML='<div class="nav-sec">агентство</div>'+navItems(visible.filter(n=>!n.service))
       +'<div class="nav-sec">Vertux</div>'+navItems(visible.filter(n=>n.service));
-    $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.id));
+    $$('.nav-item').forEach(n=>n.onclick=e=>{e.preventDefault();go(n.dataset.id);});
     $$('[data-raw-badge]').forEach(b=>b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); pFilter='new'; go('projects'); });
   }
 
@@ -1325,16 +1374,36 @@
 
   async function start(user){
     USER=user;
-    DATA=await window.VC.loadData();
+    async function refreshData(){
+      const button=$('#refreshBtn');button.disabled=true;
+      try{DATA=await window.VC.loadData();}
+      catch(_){DATA={projects:DATA?.projects||[],_source:'offline'};}
+      $('#srcPill').classList.toggle('live',DATA._source==='db');
+      $('#srcLabel').textContent=DATA._source==='db'?DATA.projects.length+' лидов в базе':'база недоступна';
+      button.disabled=false;
+      renderNav();render();
+    }
+    DATA={projects:[],_source:'offline'};
+    await refreshData();
     if(DATA._source==='db'){ $('#srcPill').classList.add('live'); $('#srcLabel').textContent=DATA.projects.length+' лидов в базе'; }
     else { $('#srcLabel').textContent='база недоступна'; }
     renderNav(); render(); renderUser();
     $('#collapseBtn').onclick=()=>$('#app').classList.toggle('collapsed');
     $('#drawerScrim').onclick=closeDrawer;
-    document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeDrawer(); closeModal(); } });
-    $('#refreshBtn').onclick=async()=>{ DATA=await window.VC.loadData(); renderNav(); render(); };
+    document.addEventListener('keydown',e=>{
+      const overlay=$('#modal').classList.contains('open')?$('#modal'):$('#drawer').classList.contains('open')?$('#drawer'):null;
+      if(!overlay)return;
+      if(e.key==='Escape'){e.preventDefault();overlay.id==='modal'?closeModal():closeDrawer();}
+      if(e.key==='Tab'){
+        const items=$$('button,a[href],input,select,textarea,[tabindex="0"]',overlay).filter(e=>!e.disabled&&e.getClientRects().length);
+        if(!items.length)return;const first=items[0],last=items.at(-1);
+        if(e.shiftKey&&(document.activeElement===first||!overlay.contains(document.activeElement))){e.preventDefault();last.focus();}
+        else if(!e.shiftKey&&(document.activeElement===last||!overlay.contains(document.activeElement))){e.preventDefault();first.focus();}
+      }
+    });
+    $('#refreshBtn').onclick=refreshData;
     const s=$('#globalSearch');
-    s.oninput=()=>{ q=s.value.trim().toLowerCase(); if(view!=='projects') view='projects'; render(); };
+    s.oninput=()=>{if(view==='trainer'){TR.listening=false;trStopSTT();}q=s.value.trim().toLowerCase();if(view!=='projects')view='projects';render();};
   }
 
   function showLogin(){

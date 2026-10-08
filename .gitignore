@@ -4,3 +4,11 @@ _preview.html
 deploy/*.tar.gz
 deploy/*.tmp
 deploy/.workspace-stage-*
+trainer-server/.env
+trainer-server/state/
+supabase/.temp/
+evidence/sales-audit/
+docs/sales-audit-2026-10-08.md
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

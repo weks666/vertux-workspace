@@ -20,9 +20,9 @@ assert.equal(manifest.identity.browserLaunch, 'one-time-fragment-ticket');
 assert.equal(manifest.identity.tokensInUrl, false);
 assert.equal(manifest.serviceModule.system, true);
 assert.equal(manifest.serviceModule.removable, false);
-assert.equal(manifest.serviceModule.version, '1.2.1');
-assert.equal(manifest.serviceModule.rollbackTarget, '1.2.0');
-assert.equal(manifest.serviceModule.rollback.version, '1.2.0');
+assert.equal(manifest.serviceModule.version, '1.2.2');
+assert.equal(manifest.serviceModule.rollbackTarget, '1.2.1');
+assert.equal(manifest.serviceModule.rollback.version, '1.2.1');
 assert.deepEqual(manifest.serviceModule.sections, ['subscription', 'support', 'access']);
 assert.equal(manifest.serviceModule.usage, 'measured-only');
 
@@ -30,7 +30,7 @@ for (const section of ['subscription', 'support', 'access']) {
   assert.match(app, new RegExp(`\\{id:'${section}',\\s*label:'[^']+',\\s*service:true\\}`));
 }
 assert.doesNotMatch(app.slice(0, app.indexOf('const ICONS')), /\{id:'(?:team|shield)'/);
-assert.match(app, /service-module\/v1\.2\.1\/vertux-service-center\.js/);
+assert.match(app, /WorkspaceCore\.serviceAsset/);
 assert.match(app, /data-service-skeleton/);
 assert.match(app, /vertux-service-center-ready/);
 assert.match(app, /vertux-service-center-error/);
@@ -41,8 +41,7 @@ assert.match(styles, /\.service-skeleton\{/);
 assert.match(styles, /@media\(prefers-reduced-motion:reduce\)/);
 assert.match(app, /exactHttpsAssetUrl\(/);
 assert.match(app, /window\.VCAuth\.nexusOrigin\(\)/);
-assert.match(app, /moduleVersion!=='1\.2\.1'/);
-assert.match(app, /canonicalAssetUrl=new URL\('\/service-module\/v1\.2\.1\/vertux-service-center\.js'/);
+assert.match(app, /canonical\.pathname/);
 assert.match(app, /safeHttpUrl\(p\.(?:demo|site|vk_link|source_url)\)/);
 assert.doesNotMatch(app, /V\.team|renderTeam|renderInvites|V\.shield|wireShield|bridgeCall/);
 assert.doesNotMatch(app, /\sonclick=/i);
@@ -52,7 +51,8 @@ assert.match(app, /navigator\.serviceWorker\.register\('sw\.js'\)/);
 
 assert.match(data, /nexusRequired:\s*true/);
 assert.match(data, /productBridgeOrigin:\s*'https:\/\/workspace\.vertux\.online'/);
-assert.match(data, /aiShieldAuthority:\s*false/);
+assert.match(data, /aiShieldAuthority:\s*true/);
+assert.match(data, /aiUrl:\s*'https:\/\/nexus\.vertux\.online\/api\/workspace-trainer'/);
 assert.match(data, /const AI_SHIELD_AUTHORIZED=CONFIG\.aiShieldAuthority===true/);
 assert.match(data, /if\(!AI_SHIELD_AUTHORIZED\) throw new Error\('AI-тренер отключён до подтверждения Vertux Shield'\)/);
 assert.match(data, /AI_SHIELD_AUTHORIZED\?hookActive\(CONFIG\.aiUrl\):Promise\.resolve\(false\)/);
@@ -78,8 +78,8 @@ assert.match(auth, /if \(value\?\.requestId\) body\.requestId = value\.requestId
 assert.doesNotMatch(auth, /nexusProduct\?\.logout\(\)\.catch|nexusProduct\.logout\(\)\.catch/);
 assert.match(auth, /Nexus не подтвердил безопасный выход/);
 assert.match(app, /async function signOutSafely\(destination\)/);
-assert.match(app, /AI-функции тренера отключены до production-проверки Vertux Shield/);
-assert.match(app, /Live-транскрипция работает без них/);
+assert.match(app, /AI-тренер пока не подключён/);
+assert.match(app, /Добавляй реплики текстом/);
 assert.doesNotMatch(app, /Workspace увидит его автоматически/);
 assert.match(app, /const sttOn=\(\)=>!!\(window\.SpeechRecognition\|\|window\.webkitSpeechRecognition\)/);
 assert.match(app, /function trStartSTT\(\)/);
@@ -93,7 +93,7 @@ assert.match(html, /connect-src 'self' https:\/\/nexus\.vertux\.online https:\/\
 assert.doesNotMatch(html, /zxcqweksn8n\.duckdns\.org/);
 assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i);
 assert.doesNotMatch(html, /\sonclick=/i);
-assert.match(sw, /vertux-workspace-v18/);
+assert.match(sw, /vertux-workspace-v20/);
 assert.match(sw, /manifest\.webmanifest/);
 assert.match(sw, /const SHELL_URLS = new Set/);
 assert.match(sw, /!policy\.includes\('no-store'\)/);
@@ -184,6 +184,9 @@ function aiShieldContext(source) {
     Map,
     Date,
     Uint8Array,
+    AbortController,
+    setTimeout,
+    clearTimeout,
     parseFloat,
     parseInt,
     isFinite,
@@ -197,36 +200,36 @@ function aiShieldContext(source) {
       return {
         ok: true,
         status: 200,
-        async json() { return { ok: true, status: 'ok' }; },
+        async json() { return { ok: true, service: 'vertux-trainer', ready: true }; },
       };
     },
   };
   context.window = {
-    VCAuth: { client() { return null; } },
+    crypto: require('node:crypto').webcrypto,
+    VCAuth: { client() { return {auth:{async getSession(){return {data:{session:{access_token:'isolated-test-session-only'}}};}}}; } },
   };
   vm.runInNewContext(source, context, { filename: 'data.js' });
   return { context, requests };
 }
 
 async function verifyAiShieldGate() {
-  assert.equal((data.match(/aiShieldAuthority:\s*false/g) || []).length, 1);
-  const disabled = aiShieldContext(data);
+  assert.equal((data.match(/aiShieldAuthority:\s*true/g) || []).length, 1);
+  const disabled = aiShieldContext(data.replace('aiShieldAuthority: true','aiShieldAuthority: false'));
   assert.equal(disabled.context.window.VC.CONFIG.aiShieldAuthority, false);
-  await disabled.context.window.VC.loadData();
+  await disabled.context.window.VC.probeAI();
   assert.equal(disabled.context.window.VC.CONFIG.aiActive, false);
   assert.equal(disabled.requests.length, 0, 'disabled AI must not probe the webhook');
 
   disabled.context.window.VC.CONFIG.aiShieldAuthority = true;
-  await disabled.context.window.VC.loadData();
+  await disabled.context.window.VC.probeAI();
   await assert.rejects(
     disabled.context.window.VC.aiCall('suffler', { transcript: 'test transcript' }),
     /Vertux Shield/,
   );
   assert.equal(disabled.requests.length, 0, 'runtime CONFIG mutation must not enable the webhook');
 
-  const reviewedSource = data.replace('aiShieldAuthority: false', 'aiShieldAuthority: true');
-  const reviewed = aiShieldContext(reviewedSource);
-  await reviewed.context.window.VC.loadData();
+  const reviewed = aiShieldContext(data);
+  await reviewed.context.window.VC.probeAI();
   assert.equal(reviewed.context.window.VC.CONFIG.aiActive, true);
   assert.equal(reviewed.requests.length, 1, 'tracked reviewed authority may probe the webhook');
 }
