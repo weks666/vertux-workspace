@@ -20,9 +20,9 @@ assert.equal(manifest.identity.browserLaunch, 'one-time-fragment-ticket');
 assert.equal(manifest.identity.tokensInUrl, false);
 assert.equal(manifest.serviceModule.system, true);
 assert.equal(manifest.serviceModule.removable, false);
-assert.equal(manifest.serviceModule.version, '1.2.2');
-assert.equal(manifest.serviceModule.rollbackTarget, '1.2.1');
-assert.equal(manifest.serviceModule.rollback.version, '1.2.1');
+assert.equal(manifest.serviceModule.version, '1.2.3');
+assert.equal(manifest.serviceModule.rollbackTarget, '1.2.2');
+assert.equal(manifest.serviceModule.rollback.version, '1.2.2');
 assert.deepEqual(manifest.serviceModule.sections, ['subscription', 'support', 'access']);
 assert.equal(manifest.serviceModule.usage, 'measured-only');
 
@@ -93,7 +93,7 @@ assert.match(html, /connect-src 'self' https:\/\/nexus\.vertux\.online https:\/\
 assert.doesNotMatch(html, /zxcqweksn8n\.duckdns\.org/);
 assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i);
 assert.doesNotMatch(html, /\sonclick=/i);
-assert.match(sw, /vertux-workspace-v20/);
+assert.match(sw, /vertux-workspace-v21/);
 assert.match(sw, /manifest\.webmanifest/);
 assert.match(sw, /const SHELL_URLS = new Set/);
 assert.match(sw, /!policy\.includes\('no-store'\)/);

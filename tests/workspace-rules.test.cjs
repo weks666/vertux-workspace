@@ -50,7 +50,7 @@ test('money shares always add up to original cents, including half-cent cases',(
 });
 
 test('current and rollback Service Center versions load only from canonical assets',()=>{
-  for(const moduleVersion of ['1.2.1','1.2.2']){
+  for(const moduleVersion of ['1.2.2','1.2.3']){
     const assetUrl='https://nexus.vertux.online/service-module/v'+moduleVersion+'/vertux-service-center.js';
     assert.equal(core.serviceAsset({moduleVersion,contractVersion:2,assetUrl},'https://nexus.vertux.online').url,assetUrl);
   }

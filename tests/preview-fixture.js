@@ -35,7 +35,7 @@
   const overview={capabilities:{viewCommercialDetails:!manager,createSupportTicket:true,replySupportTicket:false},module:{sections:['subscription','support','access']},product:{name:'Локальный Workspace',id:'fixture-product'},organization:{name:'Тестовая организация'},
     subscription:{status:'trial',planName:'Тестовый тариф',features:['Только локальная проверка'],priceSnapshot:null},usage:{totals:[],events:[]},support:{tickets:[],canCreate:false},
     access:{members:[{id:'fixture-user',name:'Тестовый менеджер',email:'fixture@example.invalid',role:'manager',status:'active',accessMode:'all'}],invitations:[],availableProducts:[],canManage:false,grantableRoles:[]}};
-  window.nexusProduct={service:{async config(){return {ok:true,data:{moduleVersion:'1.2.2',contractVersion:2,assetUrl:'https://nexus.vertux.online/service-module/v1.2.2/vertux-service-center.js'}};},async overview(){return {ok:true,data:clone(overview)};}}};
+  window.nexusProduct={service:{async config(){return {ok:true,data:{moduleVersion:'1.2.3',contractVersion:2,assetUrl:'https://nexus.vertux.online/service-module/v1.2.3/vertux-service-center.js'}};},async overview(){return {ok:true,data:clone(overview)};}}};
   const validate=window.VC.exactHttpsAssetUrl;
   window.VC.exactHttpsAssetUrl=(...args)=>{const url=validate(...args);return url?'/__service/vertux-service-center.js':'';};
   const load=window.VC.loadData;

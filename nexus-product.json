@@ -29,7 +29,7 @@
   "serviceModule": {
     "package": "vertux-service-center",
     "contractVersion": 2,
-    "version": "1.2.2",
+    "version": "1.2.3",
     "source": "nexus-control-plane",
     "system": true,
     "removable": false,
@@ -39,9 +39,9 @@
       "access"
     ],
     "usage": "measured-only",
-    "rollbackTarget": "1.2.1",
+    "rollbackTarget": "1.2.2",
     "rollback": {
-      "version": "1.2.1"
+      "version": "1.2.2"
     }
   },
   "themeContract": {

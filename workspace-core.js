@@ -65,7 +65,7 @@
   }
   function serviceAsset(config,origin){
     const version=String(config?.moduleVersion||'');
-    if(config?.contractVersion!==2||!['1.2.1','1.2.2'].includes(version)) throw new Error('Nexus вернул неподдерживаемую версию системного модуля');
+    if(config?.contractVersion!==2||!['1.2.2','1.2.3'].includes(version)) throw new Error('Nexus вернул неподдерживаемую версию системного модуля');
     if(origin!=='https://nexus.vertux.online') throw new Error('Недоверенный сервер Nexus');
     const pathname='/service-module/v'+version+'/vertux-service-center.js';
     const url=new URL(pathname,origin).href;

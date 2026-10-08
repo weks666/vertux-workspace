@@ -5,7 +5,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const assets=new Set(['index.html','styles.css','workspace-core.js','outreach.js','data.js','app.js','vendor/supabase.js','vendor/xlsx.full.min.js','manifest.webmanifest','icon.svg','tests/preview-fixture.js']);
 export async function startPreview(port=47861){
-  const serviceRoot=process.env.WORKSPACE_SERVICE_ASSETS||resolve(root,'../../projects/vertux-nexus/app/public/service-module/v1.2.2');
+  const serviceRoot=process.env.WORKSPACE_SERVICE_ASSETS||resolve(root,'../../projects/vertux-nexus/app/public/service-module/v1.2.3');
   const server=createServer(async(req,res)=>{
     try{
       const pathname=new URL(req.url,'http://127.0.0.1').pathname;
