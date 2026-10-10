@@ -6,9 +6,15 @@ deploy/*.tmp
 deploy/.workspace-stage-*
 trainer-server/.env
 trainer-server/state/
+lead-server/.env
+lead-server/state/
+evidence/lead-intelligence/
 supabase/.temp/
 evidence/sales-audit/
 docs/sales-audit-2026-10-08.md
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+node_modules/
+__pycache__/
+*.pyc

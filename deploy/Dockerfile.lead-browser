@@ -1,0 +1,8 @@
+# Optional research renderer. The worker requires --network=none at run time.
+# Version must match npm Playwright; browser downloads occur only at image build.
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
+WORKDIR /app
+RUN npm install --ignore-scripts --omit=dev --no-audit --no-fund playwright@1.64.0
+COPY lead-server/browser-renderer.mjs lead-server/safe-fetch.mjs /app/lead-server/
+USER pwuser
+ENTRYPOINT ["node", "/app/lead-server/browser-renderer.mjs", "--isolated-child"]

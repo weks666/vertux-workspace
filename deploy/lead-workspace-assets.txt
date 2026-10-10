@@ -1,0 +1,15 @@
+index.html
+styles.css
+lead-intelligence.css
+workspace-core.js
+outreach.js
+data.js
+auth.js
+lead-intelligence.js
+app.js
+sw.js
+manifest.webmanifest
+nexus-product.json
+icon.svg
+vendor/supabase.js
+vendor/xlsx.full.min.js

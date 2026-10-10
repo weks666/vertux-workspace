@@ -1,0 +1,10 @@
+FROM node:24.15.0-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY lead-server/ ./lead-server/
+COPY deploy/lead-docker-proxy.mjs /broker/docker
+RUN chmod 0555 /broker/docker
+ENV PATH="/broker:${PATH}"
+USER node
+ENTRYPOINT ["node", "/app/lead-server/run.mjs"]

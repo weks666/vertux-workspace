@@ -3,6 +3,8 @@
  * всё, что показывает приложение, либо лежит в базе, либо честно пишет «нет данных». */
 
 const CONFIG = {
+  // Dedicated Workspace data plane; API validates a fresh product session.
+  leadIntelligenceUrl: 'https://vertuxdb.duckdns.org/webhook/vertux-lead-intelligence',
   productSlug: 'vertux-workspace',
   nexusOrigin: 'https://nexus.vertux.online',
   productBridgeOrigin: 'https://workspace.vertux.online',
@@ -173,6 +175,15 @@ const FORMATS=[
         processed:false, source:'2gis',
       };
     },
+  },
+  {
+    id:'companies', label:'Список компаний (CSV / XLSX)',
+    detect:h=>h.some(k=>['company','name','компания','название'].includes(k.trim())),
+    map:o=>({company:pick(o,'Company','Name','Компания','Название'),phone:pick(o,'Phone','Телефон'),
+      city:pick(o,'City','Город'),niche:pick(o,'Industry','Category','Отрасль','Категория'),
+      site:pick(o,'Website','Site','Сайт'),email:pick(o,'Email','E-mail','Почта'),
+      address:pick(o,'Address','Адрес'),context:pick(o,'Description','Описание'),
+      processed:false,source:'companies'}),
   },
 ];
 
@@ -407,6 +418,43 @@ async function hookActive(url){
 }
 async function probeAI(){CONFIG.aiActive=await hookActive(CONFIG.aiUrl);return CONFIG.aiActive;}
 
+/* Independent product API: no trainer budget or provider credential in the browser. */
+function leadConfigured(){return !!safeHttpsUrl(CONFIG.leadIntelligenceUrl);}
+async function leadCall(action,payload={}){
+  const endpoint=safeHttpsUrl(CONFIG.leadIntelligenceUrl);
+  const fail=(code,message)=>{const error=new Error(message);error.code=code;return error;};
+  if(!endpoint)throw fail('not_configured','Сервис исследований ещё не подключён. Компании и CRM продолжают работать.');
+  let session;
+  try{session=await db().auth.getSession();}catch(_){throw fail('session_required','Не удалось проверить сессию. Повтори вход через Nexus.');}
+  const token=session?.data?.session?.access_token;
+  if(!token)throw fail('session_required','Сессия завершилась. Повтори вход через Nexus.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+  const messages={not_found:'Компания или задача больше не доступна. Обнови данные.',forbidden:'Для этого действия недостаточно прав.',
+    revision_conflict:'Материалы уже изменены в другом окне. Твой текст сохранён на экране; скопируй его и загрузи актуальную версию.',
+    conflict:'Данные изменились. Обнови карточку и повтори действие.',daily_budget_exhausted:'Дневной бюджет исчерпан. Проверь лимиты в настройках.',
+    company_budget_exhausted:'Бюджет компании исчерпан. Проверь лимиты в настройках.',budget_exceeded:'Лимит расходов исчерпан. Проверь бюджет.',
+    excluded:'Компания исключена из обработки.',opted_out:'Компания отказалась от контактов.',invalid_settings:'Проверь значения настроек и доступные модели.',
+    invalid_request:'Проверь введённые данные.',provider_unavailable:'Провайдер пока недоступен. Повтори действие позже.',
+    model_not_allowed:'Модель больше не разрешена сервером. Обнови настройки и выбери доступную модель.',budget_above_server_limit:'Заданный бюджет выше серверного потолка. Обнови настройки и уменьши сумму.',
+    company_budget_above_daily:'Бюджет компании не может превышать дневной бюджет.',ai_budget_not_configured:'Для AI нужны подключённый провайдер и ненулевые бюджеты.',
+    invalid_score_weights:'Сумма весов скоринга должна быть равна 100.',invalid_industry_profiles:'Выбери хотя бы один доступный отраслевой профиль.',
+    invalid_timezone:'Укажи существующий часовой пояс, например Europe/Moscow.',invalid_page_limits:'Глубина Deep Research должна быть не меньше Quick Scan.',
+    job_conflict:'Для компании уже есть активная задача. Обнови очередь.',invalid_transition:'Состояние задачи уже изменилось. Обнови очередь и повтори действие.'};
+  try{
+    const response=await fetch(endpoint,{method:'POST',redirect:'error',cache:'no-store',signal:controller.signal,
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({...payload,action})});
+    const body=await response.json().catch(()=>null),code=typeof body?.error==='string'?body.error:'request_failed';
+    if(!response.ok||body?.ok!==true)throw fail(code,messages[code]||({401:'Сессия завершилась. Повтори вход через Nexus.',403:messages.forbidden,
+      404:'Сервис исследований ещё не подключён.',409:messages.revision_conflict,429:'Лимит запросов достигнут. Повтори позже.',
+      503:'Сервис исследований временно недоступен. Повтори позже.'}[response.status])||'Не удалось выполнить действие. Данные на экране сохранены; повтори позже.');
+    return body;
+  }catch(error){
+    if(error.name==='AbortError')throw fail('timeout','Сервис не ответил за 20 секунд. Обнови состояние перед повторным запуском.');
+    if(error.code)throw error;
+    throw fail('network','Не удалось связаться с сервисом исследований. Проверь соединение и повтори.');
+  }finally{clearTimeout(timer);}
+}
+
 async function loadData(){
   const [projects,aiActive]=await Promise.all([
     loadProjects(),
@@ -420,7 +468,7 @@ window.VC = {
   CONFIG, loadData, loadProjects,
   safeHttpUrl, safeHttpsUrl, exactHttpsAssetUrl,
   saveStage, saveNotes, saveDemo, savePatch, saveRaw, saveMoney,
-  logCall, callsOf, aiCall, probeAI,
+  logCall, callsOf, aiCall, probeAI, leadCall, leadConfigured,
   readFileRows, fileFingerprint, findImported, rememberImport,
   detectFormat, mapRows, planImport, runImport,
   FORMATS,
