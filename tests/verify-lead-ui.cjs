@@ -52,14 +52,41 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'evidence/lead-intell
       const job=await page.evaluate(()=>window.__fixture.lead.jobs.find(j=>j.project_id==='fixture-1'&&j.status==='queued'));assert.equal(job.force,true);
       await page.getByRole('button',{name:'Deep Research',exact:true}).click();await saved('Исследование в очереди');assert.equal(await page.evaluate(()=>window.__fixture.lead.jobs.length),before+1);
       await page.evaluate(id=>window.__fixture.lead.complete(id),job.id);await page.evaluate(()=>window.VCLead.refresh(true));
+      assert.equal(await page.locator('#leadCardMount [role=status]').filter({hasText:'Результат появится после обработки'}).count(),0);
+      assert.match(await page.locator('.li-research-meta').innerText(),/Готово/);
+    });
+    await test('Queue notices follow the requested job; partial research labels uncertainty without empty fields',async()=>{
+      await close();await open('fixture-3');await tab('research');
+      await page.getByRole('button',{name:'Quick Scan',exact:true}).click();await saved('Исследование в очереди');
+      const job=await page.evaluate(()=>window.__fixture.lead.jobs.find(j=>j.project_id==='fixture-3'&&j.status==='queued'));
+      await page.evaluate(id=>{const f=window.__fixture.lead;f.jobs.find(j=>j.id===id).status='running';const lead=f.leads.find(l=>l.project_id==='fixture-3');lead.status='researching';lead.updated_at=new Date().toISOString();},job.id);
+      await page.evaluate(()=>window.VCLead.refresh(true));await saved('Исследование уже выполняется');
+      assert.equal(await page.locator('#leadCardMount [role=status]').filter({hasText:'Исследование в очереди.'}).count(),0);
+      await page.evaluate(id=>window.__fixture.lead.complete(id,{status:'partial',business:{industry:'unknown',description:'',services:[],audience:[]},officialSite:{url:'https://example.invalid/candidate',status:'candidate',confidence:.35,reason:'Недостаточно подтверждений, что сайт принадлежит компании.'},signals:[],opportunities:[],score:{total:0,priority:'unknown',components:[],reasons:[],services:[]}}),job.id);
+      await page.evaluate(()=>window.VCLead.refresh(true));
+      assert.equal(await page.locator('#leadCardMount [role=status]').filter({hasText:'Результат появится после обработки'}).count(),0);
+      assert.equal(await page.locator('.li-mini-jobs').count(),0);assert.match(await page.locator('.li-research-meta').innerText(),/Частичные данные/);
+      assert.equal(await page.locator('.li-business h4').innerText(),'Отрасль не определена');
+      const business=await page.locator('.li-business').innerText();assert.doesNotMatch(business,/unknown|Аудитория:|Официальный сайт:/);assert.match(business,/Сайт-кандидат:.*\n.*35%/s);
+      assert.equal(await page.locator('.li-business a').getAttribute('href'),'https://example.invalid/candidate');
+      await page.screenshot({path:path.join(out,'desktop-partial-research.png')});
+      await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.querySelector('#drawer').scrollWidth<=document.querySelector('#drawer').clientWidth+1),true);await page.screenshot({path:path.join(out,'mobile-partial-research.png')});await page.setViewportSize({width:1440,height:1000});
+      for(const status of ['failed','cancelled']){
+        await page.locator('#liForceResearch').check();await page.getByRole('button',{name:'Quick Scan',exact:true}).click();await saved('Исследование в очереди');
+        await page.evaluate(status=>{const f=window.__fixture.lead;f.jobs.find(j=>j.project_id==='fixture-3'&&j.status==='queued').status=status;const lead=f.leads.find(l=>l.project_id==='fixture-3');lead.status=status==='failed'?'error':status;lead.updated_at=new Date().toISOString();},status);
+        await page.evaluate(()=>window.VCLead.refresh(true));assert.equal(await page.locator('#leadCardMount [role=status]').filter({hasText:'Результат появится после обработки'}).count(),0);
+      }
+      await close();await open('fixture-1');await tab('research');assert.match(await page.locator('.li-business').innerText(),/Официальный сайт:/);
     });
     await test('Material editing saves revision, treats HTML as text, supports copy and download',async()=>{
       await tab('materials');const text='Проверенный черновик <img src=x onerror="window.injected=true">';
       await page.locator('#liMaterial_proposal').fill(text);await page.getByRole('button',{name:'Сохранить материалы',exact:true}).click();await saved('Материалы сохранены');
+      await page.evaluate(()=>window.VCLead.refresh(true));await saved('Материалы сохранены');
       assert.equal(await page.evaluate(()=>window.__fixture.lead.leads[0].materials.proposal),text);
       assert.equal(await page.evaluate(()=>window.injected),undefined);
       assert.equal(await page.locator('#liMaterial_proposal').inputValue(),text);
       await page.getByRole('button',{name:'Скопировать всё',exact:true}).click();await saved('Материалы скопированы');assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Проверенный черновик/);
+      await page.evaluate(()=>window.VCLead.refresh(true));await saved('Материалы скопированы');
       const download=page.waitForEvent('download');await page.getByRole('button',{name:'Скачать .txt',exact:true}).click();const file=await download;assert.match(file.suggestedFilename(),/\.txt$/);
       assert.match(fs.readFileSync(await file.path(),'utf8'),/Проверенный черновик/);
     });

@@ -27,7 +27,7 @@
   function event(kind,projectId){fixture.events.unshift({id:crypto.randomUUID(),kind,project_id:projectId,created_at:now()});}
   function ensureLead(id){let l=fixture.leads.find(l=>l.project_id===id);if(!l){l={project_id:id,status:'unknown',quick:null,deep:null,score:null,materials:{},materials_revision:0,excluded:false,opted_out:false,updated_at:now()};fixture.leads.push(l);}return l;}
   ensureLead('fixture-3').status='error';
-  fixture.complete=id=>{const j=fixture.jobs.find(j=>j.id===id);if(!j)return;Object.assign(j,{status:'completed',progress:{stage:'completed'}});const l=ensureLead(j.project_id),r=research(j.project_id,j.kind);Object.assign(l,{[j.kind]:r,status:'complete',score:r.score,checked_at:r.checkedAt,expires_at:r.expiresAt,updated_at:now()});if(j.kind==='deep'){l.materials=materials();l.materials_revision++;}event('completed',j.project_id);};
+  fixture.complete=(id,overrides={})=>{const j=fixture.jobs.find(j=>j.id===id);if(!j)return;Object.assign(j,{status:'completed',progress:{stage:'completed'}});const l=ensureLead(j.project_id),r={...research(j.project_id,j.kind),...overrides};Object.assign(l,{[j.kind]:r,status:r.status,score:r.score,checked_at:r.checkedAt,expires_at:r.expiresAt,updated_at:now()});if(j.kind==='deep'){l.materials=materials();l.materials_revision++;}event('completed',j.project_id);};
   window.VC.leadConfigured=()=>!params.has('lead-unconfigured');
   window.VC.leadCall=async(action,payload={})=>{
     fixture.requests.push(clone({action,...payload}));await new Promise(resolve=>setTimeout(resolve,25));

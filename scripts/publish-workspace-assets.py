@@ -5,7 +5,8 @@ index/tree/commit, and save a SHA-256 receipt under ignored evidence. Dirty asse
 can be reviewed, but cannot be published. Clean packages use committed HEAD bytes.
 
 --publish --receipt PATH: require the unchanged committed package and source HEAD
-already on origin/main; push gh-pages normally, then update only Pages' source.
+already on origin/main; push gh-pages normally, update only Pages' source, and
+request a build unless this exact commit is already queued, building, or built.
 --verify --receipt PATH: read-only Pages build polling and HTTPS hashes of every
 allowlisted asset. .nojekyll is verified in the Git tree, not assumed HTTP-public.
 --self-test: temporary local repository with fake remotes, Pages API and HTTPS.
@@ -297,6 +298,21 @@ class AssetRelease:
         require(after.get("source") == desired and after.get("cname") == before.get("cname") and after.get("html_url") == before.get("html_url"), "pages_source_update_not_confirmed")
         receipt["publication"] = {"status": "PAGES_SOURCE_UPDATED", "at": utc_now(), "commit": receipt["commit"], "source": desired, "url": SITE_URL}
         self.save_receipt(path, receipt)
+        # A source switch can leave the latest build on the old branch. A push
+        # and successful source PUT therefore do not establish a queued build.
+        try:
+            latest = self.gh_api(f"repos/{REPOSITORY}/pages/builds/latest")
+        except ReleaseError:
+            latest = {}
+        active = latest.get("commit") == receipt["commit"] and latest.get("status") in ("queued", "building", "built")
+        if active:
+            build = {"requested": False, "status": latest["status"], "commit": receipt["commit"]}
+        else:
+            requested = self.gh_api(f"repos/{REPOSITORY}/pages/builds", "POST")
+            require(requested.get("status") in ("queued", "building", "built"), "pages_build_request_not_confirmed")
+            build = {"requested": True, "status": requested["status"], "at": utc_now(), "targetCommit": receipt["commit"]}
+        receipt["publication"]["build"] = build
+        self.save_receipt(path, receipt)
         return receipt
 
     def fetch_asset(self, name: str, expected: dict) -> bytes:
@@ -385,10 +401,11 @@ def self_test() -> None:
                 super().__init__(path)
                 self.refs = {SOURCE_REF: self.head(), PAGES_REF: None}
                 self.page = {"build_type": "legacy", "source": {"branch": "main", "path": "/"}, "cname": None, "html_url": SITE_URL}
-                self.pushes, self.puts, self.fetches = [], [], []
+                self.pushes, self.puts, self.posts, self.fetches = [], [], [], []
                 self.corrupt = False
-                self.build_commit = None
+                self.build_commit = self.head()
                 self.build_status = "built"
+                self.build_read_fails = False
             def remote_head(self, ref):
                 return self.refs[ref]
             def push_commit(self, commit):
@@ -396,7 +413,17 @@ def self_test() -> None:
                 self.refs[PAGES_REF] = commit
             def gh_api(self, endpoint, method="GET", body=None):
                 if endpoint.endswith("/builds/latest"):
+                    assert method == "GET" and body is None
+                    if self.build_read_fails:
+                        self.build_read_fails = False
+                        raise ReleaseError("command_failed:gh:api")
                     return {"commit": self.build_commit or self.refs[PAGES_REF], "status": self.build_status}
+                if method == "POST":
+                    assert endpoint == f"repos/{REPOSITORY}/pages/builds" and body is None
+                    assert self.page["source"] == {"branch": "gh-pages", "path": "/"}
+                    self.posts.append({"endpoint": endpoint, "method": method, "body": body})
+                    self.build_commit, self.build_status = self.refs[PAGES_REF], "queued"
+                    return {"url": f"https://api.github.com/repos/{REPOSITORY}/pages/builds/latest", "status": "queued"}
                 if method == "PUT":
                     self.puts.append(body)
                     self.page["source"] = body["source"]
@@ -428,7 +455,7 @@ def self_test() -> None:
                 raise AssertionError("Expected refusal: " + code)
         fails(lambda: release.publish(dirty_path), "dirty_preview_cannot_be_published")
         fails(lambda: release.publish(path), "assets_not_fully_committed_prepare_again")
-        assert not release.pushes and not release.puts
+        assert not release.pushes and not release.puts and not release.posts
         assert (root / ".git/index").read_bytes() == original_index, "index changed during dirty validation"
         (root / "app.js").write_bytes(original_app)
         staged_blob = git("hash-object", "-w", "--stdin", data=b"window.staged = true;\n").decode().strip()
@@ -450,8 +477,15 @@ def self_test() -> None:
         release.page["cname"] = "example.invalid"
         fails(lambda: release.publish(path), "existing_custom_domain_requires_separate_review")
         release.page["cname"] = None
-        release.publish(path)
-        release.publish(path)
+        published = release.publish(path)
+        assert published["publication"]["build"]["requested"] is True
+        assert published["publication"]["build"]["targetCommit"] == record["commit"]
+        assert release.posts == [{"endpoint": f"repos/{REPOSITORY}/pages/builds", "method": "POST", "body": None}]
+        for status in ("queued", "building", "built"):
+            release.build_status = status
+            repeated = release.publish(path)
+            assert repeated["publication"]["build"] == {"requested": False, "status": status, "commit": record["commit"]}
+        assert len(release.posts) == 1
         assert (root / ".git/index").read_bytes() == original_index, "index changed during publish validation"
         assert len(release.pushes) == 1 and release.puts == [{"source": {"branch": "gh-pages", "path": "/"}}]
         release.build_commit = "f" * 40
@@ -461,6 +495,11 @@ def self_test() -> None:
         release.build_status = "errored"
         fails(lambda: release.verify(path, timeout=0), "pages_build_failed")
         assert not release.fetches
+        retried = release.publish(path)
+        assert retried["publication"]["build"]["requested"] is True and len(release.posts) == 2
+        release.build_read_fails = True
+        missing = release.publish(path)
+        assert missing["publication"]["build"]["requested"] is True and len(release.posts) == 3
         release.build_status = "built"
         verified = release.verify(path, timeout=0)
         assert verified["verification"]["status"] == "PUBLISHED_ASSETS_VERIFIED" and sorted(release.fetches) == ["app.js", "index.html"]
@@ -485,7 +524,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare", action="store_true", help="Prepare only (default).")
-    mode.add_argument("--publish", action="store_true", help="Explicitly push the reviewed gh-pages commit and change Pages source.")
+    mode.add_argument("--publish", action="store_true", help="Explicitly push the reviewed gh-pages commit, set Pages source, and request a build if needed.")
     mode.add_argument("--verify", action="store_true", help="Read-only Pages/HTTPS verification after publication.")
     mode.add_argument("--self-test", action="store_true", help="Run isolated tests; no network or real publication.")
     parser.add_argument("--receipt", help="Prepared receipt for publish/verify; optional new output path for prepare.")

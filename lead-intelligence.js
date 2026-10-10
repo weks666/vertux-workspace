@@ -40,7 +40,7 @@
     chatgpt_response_incomplete:'ChatGPT вернул неполный ответ. Материалы не сформированы; автоматического повтора нет.'
   };
   const MATERIALS=[['summary','Кратко о компании',6000],['proposal','Предложение Vertux',6000],['callScript','Сценарий звонка',8000],['emailSubject','Тема письма',200],['emailBody','Первое письмо',6000],['icebreaker','Начало разговора',1200]];
-  const state={context:null,snapshot:null,attempted:false,loading:false,loadedCount:0,watermark:null,error:'',notice:'',busy:false,tab:'queue',jobFilter:'',settingsDraft:null,
+  const state={context:null,snapshot:null,attempted:false,loading:false,loadedCount:0,watermark:null,error:'',notice:'',noticeJobId:null,busy:false,tab:'queue',jobFilter:'',settingsDraft:null,
     filters:{industry:'',status:'',priority:'',service:'',freshness:''},details:new Map(),drafts:new Map(),card:null,timer:null};
   const projects=()=>state.context?.getProjects()||[];
   const configured=()=>window.VC.leadConfigured();
@@ -59,6 +59,17 @@
   const planLimitError=code=>['subscription_sharing_usage_limit_exceeded','plan_quota_exceeded'].includes(code);
   const limitAction=code=>planLimitError(code)?`<p class="li-limit-action">${usageLink()}</p>`:'';
   const activeJob=job=>['queued','pending','running','retry','retry_wait','retrying'].includes(job.status);
+  function enqueueNotice(job){
+    if(job.status==='paused')return 'Исследование уже есть в очереди и приостановлено. Продолжи его в центре исследований.';
+    if(job.status==='running')return 'Исследование уже выполняется. Результат появится после обработки.';
+    if(['retry','retry_wait','retrying'].includes(job.status))return 'Исследование ожидает повторной попытки. Состояние задачи доступно в центре исследований.';
+    return activeJob(job)?'Исследование в очереди. Результат появится после обработки.':'';
+  }
+  function syncEnqueueNotice(target,jobs){
+    if(!target?.noticeJobId)return;
+    const job=arr(jobs).find(job=>job.id===target.noticeJobId);if(!job)return;
+    target.notice=enqueueNotice(job);if(!target.notice)target.noticeJobId=null;
+  }
   const leadOf=id=>arr(state.snapshot?.leads).find(l=>String(l.project_id)===String(id))||state.details.get(String(id))?.lead||null;
   const researchOf=lead=>lead?.deep||lead?.quick||null;
   const date=value=>{if(!value)return 'Ещё не проверено';const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString('ru-RU',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'Дата не указана';};
@@ -101,6 +112,7 @@
       const merged=new Map((since?arr(state.snapshot?.leads):[]).map(lead=>[String(lead.project_id),lead]));
       changed.forEach(lead=>merged.set(String(lead.project_id),lead));
       state.snapshot={...result,leads:[...merged.values()]};state.watermark=result.serverTime||null;state.error='';
+      syncEnqueueNotice(state,result.jobs);syncEnqueueNotice(state.card,result.jobs);
       if(state.card?.tab==='research'&&state.card.mount.isConnected&&$('#drawer')?.classList.contains('open'))await loadDetail(state.card.project.id,true);
     }catch(error){state.error=friendlyError(error);state.errorCode=error.code;}
     finally{state.loading=false;notify();renderCard();schedulePoll();showPlanWelcome();}
@@ -296,7 +308,7 @@
   }
   function wireCenter(root){
     ensure();wireActions(root);
-    $$('[data-li-tab]',root).forEach(el=>el.onclick=()=>{state.tab=el.dataset.liTab;state.notice='';notify();$(`[data-li-tab="${state.tab}"]`)?.focus();});
+    $$('[data-li-tab]',root).forEach(el=>el.onclick=()=>{state.tab=el.dataset.liTab;state.notice='';state.noticeJobId=null;notify();$(`[data-li-tab="${state.tab}"]`)?.focus();});
     wireTabKeys(root,'data-li-tab');
     const filter=$('#liJobFilter',root);if(filter)filter.onchange=()=>{state.jobFilter=filter.value;notify();};
     const form=$('#liSettingsForm',root);if(form&&canConfigureResearch()){
@@ -312,7 +324,7 @@
 
   function mountCard(project,mount,tabs,crm){
     const same=state.card&&String(state.card.project.id)===String(project.id);
-    state.card={project,mount,tabs,crm,tab:same?state.card.tab:'crm',error:same?state.card.error:'',notice:same?state.card.notice:'',replyText:same?state.card.replyText:'',policyDraft:same?state.card.policyDraft:null,forceResearch:same?state.card.forceResearch:false};
+    state.card={project,mount,tabs,crm,tab:same?state.card.tab:'crm',error:same?state.card.error:'',notice:same?state.card.notice:'',noticeJobId:same?state.card.noticeJobId:null,replyText:same?state.card.replyText:'',policyDraft:same?state.card.policyDraft:null,forceResearch:same?state.card.forceResearch:false};
     renderCard();
     if(state.card.tab!=='crm'&&configured())void loadDetail(project.id,true);
   }
@@ -320,7 +332,7 @@
     id=String(id);const old=state.details.get(id)||{};
     if(old.loading)return;
     state.details.set(id,{...old,loading:true,error:''});if(!quiet)renderCard();
-    try{const result=await window.VC.leadCall('detail',{projectId:id});state.details.set(id,{...result,loaded:true,loading:false,error:''});}
+    try{const result=await window.VC.leadCall('detail',{projectId:id});state.details.set(id,{...result,loaded:true,loading:false,error:''});syncEnqueueNotice(state,result.jobs);syncEnqueueNotice(state.card,result.jobs);}
     catch(error){state.details.set(id,{...old,loaded:true,loading:false,error:friendlyError(error),errorCode:error.code});}
     renderCard();
   }
@@ -356,10 +368,13 @@
     if(jobs.length)html+=`<div class="li-mini-jobs">${jobs.map(j=>`<div>${badge(j.kind==='deep'?'Deep Research':'Quick Scan')} ${esc(statusLabel(j.status))}</div>`).join('')}</div>`;
     if(!research)return html+empty('Исследования пока нет','Запусти Quick Scan для первичной проверки или Deep Research для подробного исследования. Отсутствие оценки ничего не говорит о качестве компании.');
     const business=research.business||{},site=research.officialSite||{},signals=arr(research.signals),opportunities=arr(research.opportunities);
+    const industry=business.industry==='unknown'?'':business.industry;
+    const audience=Array.isArray(business.audience)?business.audience.filter(value=>typeof value==='string'&&value.trim()).join(', '):typeof business.audience==='string'?business.audience.trim():'';
+    const siteLabel=site.status==='verified'?'Официальный сайт':site.status==='candidate'?'Сайт-кандидат':'Сайт';
     html+=`<div class="li-research-meta">${badge(statusLabel(lead?.status||research.status),research.status)}<span>${research.kind==='deep'?'Deep Research':'Quick Scan'}</span><span>Проверено: ${esc(date(lead?.checked_at||research.checkedAt))}</span></div>
       <p class="mut li-caption">Обновить до ${esc(date(lead?.expires_at||research.expiresAt))}</p>
-      <div class="li-business"><h4>${esc(INDUSTRY[business.industry]||business.industry||'Отрасль не определена')}</h4><p>${esc(business.description||'Недостаточно данных для описания бизнеса.')}</p>${arr(business.services).length?`<p><b>Услуги:</b> ${esc(business.services.join(', '))}</p>`:''}${business.audience?`<p><b>Аудитория:</b> ${esc(Array.isArray(business.audience)?business.audience.join(', '):business.audience)}</p>`:''}
-      <p><b>Официальный сайт:</b> ${site.url?safeLink(site.url):'Не подтверждён'}<br><span class="mut">${esc(site.reason||'')} · уверенность ${confidence(site.confidence)}</span></p></div>`;
+      <div class="li-business"><h4>${esc(INDUSTRY[industry]||industry||'Отрасль не определена')}</h4><p>${esc(business.description||'Недостаточно данных для описания бизнеса.')}</p>${arr(business.services).length?`<p><b>Услуги:</b> ${esc(business.services.join(', '))}</p>`:''}${audience?`<p><b>Аудитория:</b> ${esc(audience)}</p>`:''}
+      <p><b>${siteLabel}:</b> ${site.url?safeLink(site.url):'Не подтверждён'}<br><span class="mut">${esc(site.reason||'')} · уверенность ${confidence(site.confidence)}</span></p></div>`;
     if(score)html+=`<section class="li-score"><h4>Приоритет ${badge(PRIORITY[score.priority]||'Не определён',score.priority)}</h4><p>${score.priority==='unknown'?'Данных недостаточно для надёжной оценки.':`<strong class="li-score-value">${Number(score.total)||0}</strong> из 100 · оценка основана на измеримых факторах`}</p><details class="li-details"><summary>Почему такая оценка</summary><div class="li-score-parts">${(Array.isArray(score.components)?score.components:Object.entries(score.components||{}).map(([id,c])=>typeof c==='object'?{id,...c}:{id,value:c})).map(c=>`<div><b>${esc(c.label||WEIGHTS[c.id]||c.id)}</b><span>${esc(c.value??0)} / ${esc(c.max??'—')}</span><p>${esc(c.reason||'Причина не указана')}</p></div>`).join('')}</div>${arr(score.reasons).length?`<ul>${score.reasons.map(reason=>`<li>${esc(reason)}</li>`).join('')}</ul>`:''}</details>${servicesOf(lead).length?`<h4>Подходящие услуги Vertux</h4><ul class="li-service-list">${servicesOf(lead).map(s=>`<li><b>${esc(s.label||SERVICES[s.id]||s.id)}</b>${s.reason?`<p>${esc(s.reason)}</p>`:''}</li>`).join('')}</ul>`:''}</section>`;
     html+=`<section class="li-research-section"><h4>Подтверждённые сигналы</h4>${signals.length?signals.map(evidenceItem).join(''):message('Подтверждённых сигналов пока недостаточно.')}</section>
       <section class="li-research-section"><h4>Возможности для обсуждения</h4><p class="mut">Гипотезы требуют проверки в разговоре с компанией.</p>${opportunities.length?opportunities.map(evidenceItem).join(''):message('Обоснованных возможностей пока не найдено.')}</section>`;
@@ -433,12 +448,13 @@
   }
   async function perform(action,payload,notice,callback){
     if(state.busy)return false;
-    state.busy=true;state.notice='';state.error='';state.errorCode=null;if(state.card){state.card.error='';state.card.errorCode=null;state.card.notice='';}
+    state.busy=true;state.notice='';state.noticeJobId=null;state.error='';state.errorCode=null;if(state.card){state.card.error='';state.card.errorCode=null;state.card.notice='';state.card.noticeJobId=null;}
     notify();renderCard();
     try{
       const result=await window.VC.leadCall(action,payload);callback?.(result);
       const text=typeof notice==='function'?notice(result):notice;
-      state.notice=text;if(state.card)state.card.notice=text;
+      const noticeJobId=action==='enqueue'&&result.job&&(activeJob(result.job)||result.job.status==='paused')?result.job.id:null;
+      state.notice=text;state.noticeJobId=noticeJobId;if(state.card){state.card.notice=text;state.card.noticeJobId=noticeJobId;}
       await refresh(true);
       if(payload.projectId&&action!=='purge')await loadDetail(payload.projectId,true);
       return true;
@@ -450,7 +466,7 @@
     return [card.project.company,'Черновики для проверки менеджером',...MATERIALS.map(([key,label])=>label+'\n'+draft.materials[key]),...draft.materials.followUps.map((text,i)=>'Последующее письмо '+(i+1)+'\n'+text)].join('\n\n');
   }
   async function copyMaterials(){
-    try{await navigator.clipboard.writeText(materialsText());state.card.notice='Материалы скопированы.';}
+    try{await navigator.clipboard.writeText(materialsText());state.card.notice='Материалы скопированы.';state.card.noticeJobId=null;}
     catch(_){state.card.error='Не удалось скопировать. Скачай .txt или выдели текст вручную.';}
     renderCard();
   }
@@ -484,9 +500,7 @@
         if(el.dataset.kind==='deep'&&!canRunDeep())return;
         await perform('enqueue',{projectId:card.project.id,kind:el.dataset.kind,force:card.forceResearch===true},result=>{
           if(!result.job||result.job.status==='completed')return 'Исследование ещё актуально. Используем сохранённый результат; новая задача не создана.';
-          if(result.job.status==='paused')return 'Исследование уже есть в очереди и приостановлено. Продолжи его в центре исследований.';
-          if(result.job.status==='running')return 'Исследование уже выполняется. Результат появится после обработки.';
-          return 'Исследование в очереди. Результат появится после обработки.';
+          return enqueueNotice(result.job);
         },()=>{card.forceResearch=false;});return;
       }
       if(action==='job'){

@@ -49,7 +49,7 @@ try:
     command(['tar','-xzf',release+'/source.tar.gz','-C',release])
     params={'release':release,'bundle':bundle,'hashes':hashes,'activate':args.activate,'migrationSha256':hashlib.sha256((ROOT/'supabase/migrations/20261010004715_workspace_lead_intelligence.sql').read_text(encoding='utf-8').encode()).hexdigest()}
     remote = r"""
-import os,sys,json,pathlib,subprocess,hashlib,datetime,secrets,time,urllib.request,urllib.error
+import os,sys,json,pathlib,subprocess,hashlib,datetime,secrets,time,stat,urllib.request,urllib.error
 os.umask(0o077)
 p=PARAMS
 base=pathlib.Path('/opt/vertux-lead-intelligence');release=pathlib.Path(p['release'])
@@ -135,7 +135,8 @@ WantedBy=multi-user.target
 unitpath='/etc/systemd/system/vertux-lead-browser.service'
 if pathlib.Path(unitpath).exists():raise RuntimeError('existing_browser_service_requires_review')
 write(unitpath,brokerunit,0o644)
-caddy=pathlib.Path('/etc/caddy/Caddyfile');original=caddy.read_bytes();write(backup/'Caddyfile',original)
+caddy=pathlib.Path('/etc/caddy/Caddyfile');original=caddy.read_bytes();caddymode=stat.S_IMODE(caddy.stat().st_mode);write(backup/'Caddyfile',original)
+supervised_edge=run(['systemctl','show','kovrocity-runtime-supervisor-0.1.6.service','--property=LoadState','--value']).decode().strip()=='loaded'
 anchor='vertuxdb.duckdns.org {'
 route='''
     handle /webhook/vertux-lead-intelligence {
@@ -147,7 +148,7 @@ route='''
         reverse_proxy 127.0.0.1:47921
     }
 '''
-if original.decode().count(anchor)!=1 or '/webhook/vertux-lead-intelligence' in original.decode():raise RuntimeError('unexpected_existing_route')
+if original.decode().count(anchor)!=1 or (not supervised_edge and '/webhook/vertux-lead-intelligence' in original.decode()):raise RuntimeError('unexpected_existing_route')
 candidate=original.decode().replace(anchor,anchor+route,1).encode()
 started=False;routed=False
 try:
@@ -173,22 +174,25 @@ console.log(JSON.stringify({rendered:true,isolation:result.isolation,requests:re
     browserresult=json.loads(run(['docker','exec','vertux-lead-intelligence','node','--input-type=module','-e',browserprobe]).decode())
     egressprobe="const net=require('node:net');const s=net.connect({host:'1.1.1.1',port:443});s.on('connect',()=>process.exit(1));s.on('error',e=>{if(!['ENETUNREACH','EHOSTUNREACH'].includes(e.code))process.exit(1);console.log('network_none_verified')});s.setTimeout(3000,()=>process.exit(1));"
     run(['docker','run','--rm','--network=none','--read-only','--user','pwuser','--cap-drop=ALL','--security-opt=no-new-privileges','--entrypoint','node',browserid,'-e',egressprobe])
-    if caddy.read_bytes()!=original:raise RuntimeError('route_changed_during_release')
-    write(caddy,candidate,0o644);routed=True
-    run(['caddy','validate','--config',str(caddy)],quiet=True);run(['systemctl','reload','caddy'])
-    for origin,wanted in [('https://weks666.github.io',401),('https://foreign.invalid',403)]:
-        req=urllib.request.Request('https://vertuxdb.duckdns.org/webhook/vertux-lead-intelligence',data=b'{"action":"overview"}',headers={'Origin':origin,'Content-Type':'application/json'})
-        try:urllib.request.urlopen(req,timeout=15);raise RuntimeError('public_route_unprotected')
-        except urllib.error.HTTPError as error:
-            if error.code!=wanted or error.headers.get('X-Vertux-Lead')!='v1':raise RuntimeError('public_route_verification_failed')
+    if not supervised_edge:
+        if caddy.read_bytes()!=original:raise RuntimeError('route_changed_during_release')
+        write(caddy,candidate,caddymode);routed=True
+        run(['caddy','validate','--config',str(caddy)],quiet=True);run(['systemctl','reload','caddy'])
+        time.sleep(6)
+        if caddy.read_bytes()!=candidate:raise RuntimeError('edge_requires_managed_route_release')
+        for origin,wanted in [('https://weks666.github.io',401),('https://foreign.invalid',403)]:
+            req=urllib.request.Request('https://vertuxdb.duckdns.org/webhook/vertux-lead-intelligence',data=b'{"action":"overview"}',headers={'Origin':origin,'Content-Type':'application/json'})
+            try:urllib.request.urlopen(req,timeout=15);raise RuntimeError('public_route_unprotected')
+            except urllib.error.HTTPError as error:
+                if error.code!=wanted or error.headers.get('X-Vertux-Lead')!='v1':raise RuntimeError('public_route_verification_failed')
     sql("UPDATE public.workspace_lead_settings SET config=jsonb_set(config,'{paused}','false'),updated_at=now();")
     # Service connection uses its own authorized operator RPC, no owner session.
     status=run(['docker','exec','vertux-lead-intelligence','node','--input-type=module','-e',"import {readLeadConfig} from '/app/lead-server/run.mjs';import{createLeadStore}from'/app/lead-server/store.mjs';const s=createLeadStore(readLeadConfig());const a=await s.getSettings();console.log(JSON.stringify({aiProvider:a.aiProvider,aiEnabled:a.aiEnabled,concurrency:a.concurrency}));"]).decode().strip()
-    receipt={**prepared,'status':'DEPLOYED_AUTH_LOCKED_AI_OFF','settings':json.loads(status),'endpoint':'https://vertuxdb.duckdns.org/webhook/vertux-lead-intelligence','missingAuthStatus':401,'foreignOriginStatus':403,'browser':{**browserresult,'directEgressBlocked':True,'sandbox':True,'dockerSocketShared':False},'caddyBeforeSha256':hashlib.sha256(original).hexdigest(),'caddyAfterSha256':hashlib.sha256(candidate).hexdigest(),'chatgptConnected':False,'paidCalls':0}
+    receipt={**prepared,'status':'DEPLOYED_AWAITING_EDGE_ROUTE' if supervised_edge else 'DEPLOYED_AUTH_LOCKED_AI_OFF','managedEdgeRequired':supervised_edge,'settings':json.loads(status),'endpoint':'https://vertuxdb.duckdns.org/webhook/vertux-lead-intelligence','missingAuthStatus':None if supervised_edge else 401,'foreignOriginStatus':None if supervised_edge else 403,'browser':{**browserresult,'directEgressBlocked':True,'sandbox':True,'dockerSocketShared':False},'caddyBeforeSha256':hashlib.sha256(original).hexdigest(),'caddyAfterSha256':hashlib.sha256(original if supervised_edge else candidate).hexdigest(),'chatgptConnected':False,'paidCalls':0}
     write(backup/'receipt.json',json.dumps(receipt,indent=2));write(base/'current-receipt.json',json.dumps(receipt,indent=2));print(json.dumps(receipt))
 except Exception:
     if routed and caddy.read_bytes()==candidate:
-        write(caddy,original,0o644);run(['caddy','validate','--config',str(caddy)],quiet=True);run(['systemctl','reload','caddy'])
+        write(caddy,original,caddymode);run(['caddy','validate','--config',str(caddy)],quiet=True);run(['systemctl','reload','caddy'])
     if started:
         run(['docker','stop','vertux-lead-intelligence']);run(['docker','rm','vertux-lead-intelligence'])
     subprocess.run(['systemctl','disable','--now','vertux-lead-browser.service'],capture_output=True)
