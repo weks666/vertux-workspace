@@ -318,3 +318,28 @@ test('invalid model catalogs, prompts, stream media and malformed UTF-8 fail clo
   const utf = fixture({ response: () => sse(new Uint8Array([255, 255])) });
   await rejectsCode(utf.provider.complete('auto', prompt), 'chatgpt_stream_interrupted');
 });
+
+test('non-SSE replies preserve bounded safe diagnostics and never accept JSON completion as generation', async () => {
+  for (const [body, headers, shape, media] of [
+    [JSON.stringify(completed('PRIVATE model output')), { 'content-type': 'application/json' }, 'completed_event', 'application/json'],
+    ['{"object":"response","output_text":"PRIVATE model output"}', { 'content-type': 'application/json' }, 'response_object', 'application/json'],
+    ['{"detail":"PRIVATE diagnostic"}', { 'content-type': 'application/json' }, 'detail_text', 'application/json'],
+    ['<!doctype html><html>PRIVATE gateway</html>', { 'content-type': 'text/html; charset=utf-8' }, 'html', 'text/html'],
+    [event(completed('PRIVATE model output')), { 'content-type': 'text/plain' }, 'sse_text', 'text/plain'],
+    ['PRIVATE content', { 'content-type': 'PRIVATE' }, 'text', 'other'],
+  ]) {
+    const { provider, state } = fixture({ response: () => new Response(body, { headers: { ...headers, 'x-request-id': 'req_safe_diagnostic' } }) });
+    const failure = await rejectsCode(provider.complete('auto', prompt), 'chatgpt_stream_required');
+    assert.equal(failure.httpStatus, 200); assert.equal(failure.requestId, 'req_safe_diagnostic');
+    assert.equal(failure.bodyShape, shape); assert.equal(failure.contentType, media);
+    assert.equal(failure.retryable, false); assert.doesNotMatch(JSON.stringify(failure), /PRIVATE/);
+    assert.equal(state.calls.filter(call => call.url === RESPONSES).length, 1);
+  }
+  const denied = fixture({ response: () => json({ error: { code: 'subscription_sharing_usage_limit_exceeded', message: 'PRIVATE' } }) });
+  const failure = await rejectsCode(denied.provider.complete('auto', prompt), 'subscription_sharing_usage_limit_exceeded');
+  assert.equal(failure.pause, true); assert.equal(failure.httpStatus, 200); assert.equal(failure.bodyShape, 'error_object');
+  await rejectsCode(denied.provider.complete('auto', prompt), 'subscription_sharing_usage_limit_exceeded');
+  assert.equal(denied.state.calls.filter(call => call.url === RESPONSES).length, 1);
+  const oversized = fixture({ response: () => new Response('x'.repeat(32769)) });
+  assert.equal((await rejectsCode(oversized.provider.complete('auto', prompt), 'chatgpt_response_too_large')).httpStatus, 200);
+});

@@ -51,7 +51,15 @@ function validatePrompt(prompt){
   if(typeof data.company!=='string'||data.company.length>160||!Array.isArray(data.facts)||!data.facts.length||data.facts.length>100||!Array.isArray(data.services)||Object.keys(data).some(k=>!['company','facts','services'].includes(k)))fail('chatgpt_prompt_invalid');
   return {messages:prompt.messages};
 }
-export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Date.now}){
+function failureDiagnostic(error){
+  const result={event:'chatgpt_inference_failed',code:publicCode(error,'chatgpt_host_unavailable')};
+  if(Number.isInteger(error?.httpStatus)&&error.httpStatus>=100&&error.httpStatus<=599)result.httpStatus=error.httpStatus;
+  if(typeof error?.requestId==='string'&&/^[a-zA-Z0-9_-]{1,160}$/.test(error.requestId))result.requestId=error.requestId;
+  if(['application/json','text/plain','text/html','application/octet-stream','other','missing'].includes(error?.contentType))result.contentType=error.contentType;
+  if(['error_object','detail_text','completed_event','response_object','json_object','json_array','sse_text','html','text','empty','sse:response.failed','sse:error'].includes(error?.bodyShape))result.bodyShape=error.bodyShape;
+  return result;
+}
+export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Date.now,onDiagnostic=()=>{}}){
   if(!/^[a-f0-9]{64}$/.test(key||''))throw new Error('Private host caller key required');
   const expected=Buffer.from('Bearer '+key);let running=null,bucket={minute:0,count:0};
   return async request=>{
@@ -88,7 +96,7 @@ export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Da
             result=await Promise.race([provider.complete(body.model,prompt,active),stopped]);
             active.throwIfAborted();ledger.settle(body.requestId,'settled');
           }
-          catch(error){ledger.settle(body.requestId,'uncertain');if(error?.pause===true)ledger.pause();if(active.aborted&&!(error instanceof LeadError))throw new LeadError('chatgpt_request_aborted',499);throw error;}
+          catch(error){ledger.settle(body.requestId,'uncertain');if(error?.pause===true)ledger.pause();try{onDiagnostic(failureDiagnostic(error));}catch{}if(active.aborted&&!(error instanceof LeadError))throw new LeadError('chatgpt_request_aborted',499);throw error;}
           finally{if(abort)active.removeEventListener('abort',abort);running=null;}
           break;
         }
@@ -104,7 +112,7 @@ export async function startChatGPTHost(env=process.env){
   const credentials=createChatGPTCredentials({directory});await credentials.status();
   const provider=createChatGPTProvider({credentials});
   const ledger=createHostLedger({path:join(directory,'requests.sqlite'),dailyCap:Number(env.LEAD_MAX_DAILY_PLAN_REQUESTS||10)});
-  const handle=createChatGPTHostHandler({key:env.LEAD_CHATGPT_REMOTE_KEY,credentials,provider,ledger});
+  const handle=createChatGPTHostHandler({key:env.LEAD_CHATGPT_REMOTE_KEY,credentials,provider,ledger,onDiagnostic:value=>process.stderr.write(JSON.stringify(value)+'\n')});
   const port=Number(env.LEAD_CHATGPT_HOST_PORT||47923);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid host port');
   const server=createServer(async(req,res)=>{
     if(req.url==='/health'&&req.method==='GET'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end('{"alive":true,"role":"personal_chatgpt_host"}');return;}

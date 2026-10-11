@@ -65,6 +65,17 @@ test('status reveals no OpenAI tokens or account identity; remote protocol prese
     assert.equal(f.calls.filter(s=>s==='complete').length,1);
   }finally{f.ledger.close();}
 });
+test('inference diagnostics contain only safe metadata and retain uncertain-request deduplication',async()=>{
+  const ledger=createHostLedger({path:':memory:'});ledger.resume();const diagnostics=[];
+  const error=Object.assign(new LeadError('chatgpt_stream_required',502),{httpStatus:200,requestId:'req_fixture',contentType:'application/json',bodyShape:'completed_event',message:'PRIVATE token and model response',response:'PRIVATE'});
+  const handle=createChatGPTHostHandler({key,credentials:{},ledger,provider:{async complete(){throw error;}},onDiagnostic:value=>diagnostics.push(value)});
+  const send=()=>handle(new Request(CHATGPT_HOST_URL,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(payload())}));
+  try{
+    const reply=await send();assert.equal(reply.status,502);assert.deepEqual(await reply.json(),{ok:false,error:'chatgpt_stream_required',pause:false});
+    assert.deepEqual(diagnostics,[{event:'chatgpt_inference_failed',code:'chatgpt_stream_required',httpStatus:200,requestId:'req_fixture',contentType:'application/json',bodyShape:'completed_event'}]);
+    assert.doesNotMatch(JSON.stringify(diagnostics),/PRIVATE/);assert.equal((await send()).status,409);assert.equal(diagnostics.length,1);
+  }finally{ledger.close();}
+});
 test('arbitrary prompts, tool messages, identifiers and extra operations cannot reach provider',async()=>{
   const f=fixture();try{
     const wrong=payload();wrong.prompt.messages[0].content='Do something unrelated';

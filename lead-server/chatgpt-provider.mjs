@@ -82,9 +82,13 @@ function classifyShape(value, text) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     if (value.error && typeof value.error === 'object') return 'error_object';
     if (typeof value.detail === 'string') return 'detail_text';
+    if (value.type === 'response.completed') return 'completed_event';
+    if (value.object === 'response') return 'response_object';
     return 'json_object';
   }
   if (Array.isArray(value)) return 'json_array';
+  if (/^(?:event:|data:)/m.test(text || '')) return 'sse_text';
+  if (/^\s*(?:<!doctype html|<html)/i.test(text || '')) return 'html';
   return text ? 'text' : 'empty';
 }
 
@@ -187,7 +191,22 @@ function completedOutput(response, maxOutputChars) {
 }
 
 async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, now }) {
-  if (!/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) { cancelBody(response.body); throw error('chatgpt_stream_required'); }
+  if (!/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
+    // Admission errors can arrive before SSE. Keep bounded, non-content
+    // diagnostics; never turn a non-stream JSON response into model success.
+    const media = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const contentType = ['application/json', 'text/plain', 'text/html', 'application/octet-stream'].includes(media) ? media : media ? 'other' : 'missing';
+    const details = { ...requestDetails(response), contentType };
+    let text;
+    try { text = await readBoundedBody(response, { signal, maxBytes: 32768 }); }
+    catch (cause) { if (cause instanceof LeadError) Object.assign(cause, details); throw cause; }
+    let value; try { value = JSON.parse(text); } catch {}
+    const bodyShape = classifyShape(value, text);
+    if (bodyShape === 'error_object') {
+      throw Object.assign(failureFromBody(value, { ...details, bodyShape, now, retryAfter: response.headers.get('retry-after') }), { contentType });
+    }
+    throw error('chatgpt_stream_required', 502, { ...details, bodyShape, retryable: false, recovery: 'fix_integration' });
+  }
   const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8', { fatal: true });
   const details = requestDetails(response);
   let bytes = 0, line = '', eventName = '', data = [], dataChars = 0, afterCR = false, events = 0, deltaChars = 0, terminal = null;
