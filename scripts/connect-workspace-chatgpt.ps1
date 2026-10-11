@@ -1,7 +1,7 @@
 param(
-  [string]$Server = '95.181.213.124',
-  [string]$IdentityFile = (Join-Path $env:USERPROFILE '.ssh/supabase_prod_ed25519'),
-  [string]$JumpServer = '31.44.4.244',
+  [string]$Server = '31.44.4.244',
+  [string]$IdentityFile = (Join-Path $env:USERPROFILE '.ssh/vertux_codex_deploy'),
+  [string]$JumpServer = '',
   [string]$JumpIdentityFile = (Join-Path $env:USERPROFILE '.ssh/vertux_codex_deploy')
 )
 $ErrorActionPreference = 'Stop'
@@ -16,6 +16,13 @@ if ($JumpServer) {
 $sshArguments += @('-i',('"'+$IdentityFile+'"'),'-L','127.0.0.1:47922:127.0.0.1:47922',('root@'+$Server))
 $connection = $null
 try {
+  $probe = New-Object System.Net.Sockets.TcpClient
+  try {
+    $probe.Connect('127.0.0.1', 47922)
+    throw 'Закрой предыдущее окно помощника ChatGPT и запусти этот файл ещё раз. Локальный порт уже занят.'
+  } catch [System.Net.Sockets.SocketException] {
+    # No previous helper is listening; do not stop unrelated processes.
+  } finally { $probe.Dispose() }
   $connection = Start-Process -FilePath 'ssh.exe' -ArgumentList $sshArguments -WindowStyle Hidden -PassThru
   $ready = $false
   for ($attempt = 0; $attempt -lt 20; $attempt++) {

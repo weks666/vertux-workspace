@@ -11,6 +11,7 @@ import {createResearcher} from './research.mjs';
 import {createChatGPTCredentials} from './chatgpt-auth.mjs';
 import {createChatGPTProvider} from './chatgpt-provider.mjs';
 import {createChatGPTLoopback} from './chatgpt-loopback.mjs';
+import {createRemoteChatGPT} from './chatgpt-remote.mjs';
 
 function positive(env,key,fallback,min=1,max=1000000){const value=Number(env[key]??fallback);if(!Number.isInteger(value)||value<min||value>max)throw new Error('Invalid setting: '+key);return value;}
 function cap(env,key){const value=Number(env[key]||0);if(!Number.isFinite(value)||value<0||value>10000)throw new Error('Invalid setting: '+key);return value;}
@@ -30,6 +31,7 @@ export function readLeadConfig(env=process.env){
     requestsPerMinute:positive(env,'LEAD_REQUESTS_PER_MINUTE',60,10,300),port:positive(env,'LEAD_PORT',47921,1024,65535),pollMs:positive(env,'LEAD_POLL_MS',5000,1000,60000),
     browserImage:env.LEAD_BROWSER_IMAGE||'',pageSpeedKey:env.LEAD_PAGESPEED_KEY||''
     ,chatgptOwnerId:env.LEAD_CHATGPT_OWNER_ID||'',chatgptDirectory:env.LEAD_CHATGPT_DIRECTORY||'',
+    chatgptRemoteUrl:env.LEAD_CHATGPT_REMOTE_URL||'',chatgptRemoteKey:env.LEAD_CHATGPT_REMOTE_KEY||'',
     maxDailyPlanRequests:positive(env,'LEAD_MAX_DAILY_PLAN_REQUESTS',10,1,50),chatgptPort:positive(env,'LEAD_CHATGPT_PORT',47922,1024,65535)
   };
 }
@@ -47,9 +49,10 @@ export async function startLeadServer(env=process.env){
   const config=readLeadConfig(env);
   const store=createLeadStore(config);
   const provider=config.aiAvailable?createLeadProvider(config):null;
-  if(config.chatgptDirectory&&!/^[0-9a-f-]{36}$/i.test(config.chatgptOwnerId))throw new Error('ChatGPT personal owner required');
-  const credentials=config.chatgptDirectory?createChatGPTCredentials({directory:config.chatgptDirectory}):null;
-  const chatgpt=credentials?{credentials,provider:createChatGPTProvider({credentials})}:null;
+  if((config.chatgptDirectory||config.chatgptRemoteUrl)&&!/^[0-9a-f-]{36}$/i.test(config.chatgptOwnerId))throw new Error('ChatGPT personal owner required');
+  if(Boolean(config.chatgptRemoteUrl)!==Boolean(config.chatgptRemoteKey))throw new Error('Complete ChatGPT host configuration required');
+  const credentials=!config.chatgptRemoteUrl&&config.chatgptDirectory?createChatGPTCredentials({directory:config.chatgptDirectory}):null;
+  const chatgpt=config.chatgptRemoteUrl?createRemoteChatGPT({url:config.chatgptRemoteUrl,key:config.chatgptRemoteKey}):credentials?{credentials,provider:createChatGPTProvider({credentials})}:null;
   const notice=event=>process.stderr.write(JSON.stringify({at:new Date().toISOString(),...event})+'\n');
   const authenticate=createAuthenticator(config);
   const handle=createLeadHandler({config,store,authenticate,chatgpt,notice});
@@ -69,7 +72,7 @@ export async function startLeadServer(env=process.env){
   });
   server.requestTimeout=30000;server.headersTimeout=10000;server.maxHeadersCount=40;
   await new Promise((done,reject)=>{server.once('error',reject);server.listen(config.port,'127.0.0.1',done);});
-  const login=chatgpt?await createChatGPTLoopback({credentials,port:config.chatgptPort}):null;
+  const login=credentials?await createChatGPTLoopback({credentials,port:config.chatgptPort}):null;
   if(config.enabled)worker.start();
   return {server,worker,async close(){await worker.stop();await login?.close();await new Promise(done=>server.close(done));}};
 }

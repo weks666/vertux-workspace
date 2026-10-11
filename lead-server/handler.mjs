@@ -53,14 +53,15 @@ export function createLeadHandler({config,store,authenticate,chatgpt=null,now=Da
       const db=store.withActor?store.withActor(user.id):store;
       const canManageChatGPT=Boolean(chatgpt&&policy.chatgptOwnerId===user.id&&meta.role==='owner');
       let chatgptInfo={available:Boolean(chatgpt),connected:false,planUsageEnabled:false,canManage:canManageChatGPT,models:[],requiresLocalConnection:true,requiresLocalSetup:true,setupInstruction:'Подключение требует первого входа через локальный помощник на твоём компьютере. После входа сервер сможет использовать разрешённые лимиты.'};
-      if(canManageChatGPT){
+      if(chatgpt?.remote)chatgptInfo.setupInstruction='Войди через локальный помощник. Подключение ChatGPT хранится на отдельном личном AI-сервере; после входа компьютер можно выключить.';
+      if(canManageChatGPT)try{
         const status=await chatgpt.credentials.status();
         chatgptInfo={...chatgptInfo,connected:status.connected===true,planUsageEnabled:status.connected===true&&status.scopes?.includes('chatgpt.tokens.use.direct'),accountLabel:status.account?.label||null};
         if(chatgptInfo.planUsageEnabled)try{
           const catalog=await chatgpt.provider.listModels();
           chatgptInfo.models=catalog.models.map(m=>({id:m.slug,label:m.display_name||m.slug}));chatgptInfo.requiresLocalSetup=false;
         }catch(error){chatgptInfo.error=publicCode(error,'chatgpt_models_unavailable');}
-      }
+      }catch(error){chatgptInfo.error=publicCode(error,'chatgpt_host_unavailable');}
       const capabilities={canEdit,canConfigure,models:policy.models,aiAvailable:policy.aiAvailable===true,maxDailyBudgetUsd:policy.maxDailyBudgetUsd||0,maxCompanyBudgetUsd:policy.maxCompanyBudgetUsd||0,maxDailyPlanRequests:policy.maxDailyPlanRequests||50,chatgpt:chatgptInfo,delivery:'drafts_only',replyIngestion:'manual'};
       switch(action){
         case 'chatgpt_status':await db.getSettings();return reply(200,{ok:true,chatgpt:chatgptInfo});
@@ -94,7 +95,7 @@ export function createLeadHandler({config,store,authenticate,chatgpt=null,now=Da
           const current={...structuredClone(DEFAULT_SETTINGS),...await db.getSettings()};
           if((body.settings?.aiProvider==='chatgpt_plan'||current.aiProvider==='chatgpt_plan')&&!canManageChatGPT)fail('chatgpt_owner_required',403);
           const settings=validateSettings(body.settings,{current,models:policy.models,chatgptModels:chatgptInfo.models.map(m=>m.id),chatgptAvailable:chatgptInfo.planUsageEnabled&&canManageChatGPT,maxDailyPlanRequests:capabilities.maxDailyPlanRequests,aiAvailable:capabilities.aiAvailable,maxDailyBudgetUsd:capabilities.maxDailyBudgetUsd,maxCompanyBudgetUsd:capabilities.maxCompanyBudgetUsd});
-          if(settings.aiEnabled&&settings.aiProvider==='chatgpt_plan')chatgpt.provider.clearUsageBlock?.();
+          if(settings.aiEnabled&&settings.aiProvider==='chatgpt_plan')await chatgpt.provider.clearUsageBlock?.();
           return reply(200,{ok:true,settings:await db.saveSettings(settings)});
         }
         case 'materials':{
