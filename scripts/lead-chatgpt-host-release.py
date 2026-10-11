@@ -111,7 +111,12 @@ def main():
    time.sleep(.4)
   else:raise RuntimeError('host_restart_failed')
   need(NGINX.read_bytes()==old,'nginx_changed_during_staging');write(NGINX,candidate,0o644);run(['nginx','-t']);run(['systemctl','reload','nginx'])
-  need(get('https://zxcqweksn8n.duckdns.org/webhook/vertux-lead-chatgpt',b'{"action":"status"}',{'Content-Type':'application/json'})[0]==403,'network_caller_gate_failed')
+  observed=[]
+  for attempt in range(16):
+   status=get('https://zxcqweksn8n.duckdns.org/webhook/vertux-lead-chatgpt',b'{"action":"status"}',{'Content-Type':'application/json'})[0];observed.append(status)
+   if len(observed)>=3 and observed[-3:]==[403,403,403]:break
+   time.sleep(.5)
+  else:raise RuntimeError('network_caller_gate_failed_'+str(observed[-1]))
   for name,cid in others.items():need(inspect(name)['Id']==cid and inspect(name)['State']['Running'],'existing_service_changed')
   receipt={'status':'PERSONAL_CHATGPT_HOST_DEPLOYED_LOGIN_PENDING','at':stamp,'image':IMAGE,'containerId':inspect(NAME)['Id'],'bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'backupPath':str(backup),'nginxBeforeSha256':EXPECTED,'nginxAfterSha256':hashlib.sha256(candidate).hexdigest(),'isolatedTests':10,'memoryLimitMb':128,'dailyRequestCap':10,'modelRequests':0,'ownerSignInVerified':False,'existingContainersUnchanged':True}
   write(previous,json.dumps(receipt,indent=2));print(json.dumps(receipt))
