@@ -53,7 +53,7 @@ function validatePrompt(prompt){
 }
 export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Date.now}){
   if(!/^[a-f0-9]{64}$/.test(key||''))throw new Error('Private host caller key required');
-  const expected=Buffer.from('Bearer '+key);let running=false,bucket={minute:0,count:0};
+  const expected=Buffer.from('Bearer '+key);let running=null,bucket={minute:0,count:0};
   return async request=>{
     const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Vertux-Lead-ChatGPT':'v1'};
     const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers});
@@ -72,15 +72,24 @@ export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Da
         case 'models':result=await provider.listModels(request.signal);break;
         case 'ready':result=await provider.ready(body.model,request.signal);break;
         case 'resume':await provider.clearUsageBlock();ledger.resume();result=true;break;
-        case 'disconnect':ledger.pause();result=await credentials.disconnect();break;
+        case 'disconnect':
+          ledger.pause();running?.abort(Object.assign(new LeadError('chatgpt_disconnected',499),{pause:true}));
+          result=await credentials.disconnect();break;
         case 'complete':{
           if(!UUID.test(body.requestId||'')||typeof body.model!=='string'||body.model.length>128)fail('invalid_input');
           const prompt=validatePrompt(body.prompt);
           if(running)fail('chatgpt_host_busy',429);
-          ledger.reserve(body.requestId);running=true;
-          try{result=await provider.complete(body.model,prompt,request.signal);ledger.settle(body.requestId,'settled');}
-          catch(error){ledger.settle(body.requestId,'uncertain');if(error.pause===true)ledger.pause();throw error;}
-          finally{running=false;}
+          const controller=new AbortController(),active=AbortSignal.any([request.signal,controller.signal]);
+          ledger.reserve(body.requestId);running=controller;
+          let abort;
+          try{
+            active.throwIfAborted();
+            const stopped=new Promise((_,reject)=>{abort=()=>reject(active.reason);active.addEventListener('abort',abort,{once:true});});
+            result=await Promise.race([provider.complete(body.model,prompt,active),stopped]);
+            active.throwIfAborted();ledger.settle(body.requestId,'settled');
+          }
+          catch(error){ledger.settle(body.requestId,'uncertain');if(error?.pause===true)ledger.pause();if(active.aborted&&!(error instanceof LeadError))throw new LeadError('chatgpt_request_aborted',499);throw error;}
+          finally{if(abort)active.removeEventListener('abort',abort);running=null;}
           break;
         }
       }

@@ -106,6 +106,7 @@ function failureFromBody(value, { httpStatus, requestId, bodyShape, responseId, 
 }
 
 async function fetchResponse(fetcher, url, options, signal) {
+  signal.throwIfAborted();
   let response;
   try { response = await raceSignal(fetcher(url, { ...options, cache: 'no-store', redirect: 'error', signal }), signal); }
   catch (cause) { if (signal.aborted) throw signal.reason; throw error('chatgpt_provider_unavailable', 503, { retryable: true, recovery: 'retry_later' }); }

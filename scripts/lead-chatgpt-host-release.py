@@ -36,7 +36,7 @@ try:
  mkdir(release);archive.seek(0);sftp.putfo(archive,release+'/source.tar.gz');sftp.chmod(release+'/source.tar.gz',0o600)
  params={'release':release,'hashes':hashes,'bundle':bundle,'apply':args.apply}
  remote=r'''
-import os,json,pathlib,subprocess,hashlib,datetime,time,stat,fcntl,socket,secrets,tarfile,urllib.request,urllib.error
+import os,json,pathlib,subprocess,hashlib,datetime,time,stat,fcntl,socket,secrets,tarfile,re,urllib.request,urllib.error
 os.umask(0o077)
 p=PARAMS
 NAME='vertux-lead-chatgpt';ROOT=pathlib.Path('/opt/vertux-lead-chatgpt');RELEASE=pathlib.Path(p['release'])
@@ -73,14 +73,15 @@ def main():
  dependency_probe="import assert from 'node:assert/strict';import{createRequire}from'node:module';const require=createRequire('/app/lead-server/chatgpt-auth.mjs');const file=require.resolve('jose');assert.ok(file.startsWith('/app/node_modules/jose/'));const jose=await import(file);assert.equal(typeof jose.jwtVerify,'function');assert.ok(globalThis.crypto.subtle);"
  run(['docker','run','--rm','--network','none','--user','1000:1000','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','128m','--pids-limit','64','--mount','type=bind,src='+str(RELEASE)+',dst=/app,readonly','--entrypoint','node',IMAGE,'--input-type=module','-e',dependency_probe])
  previous=ROOT/'current-receipt.json'
+ common=['--network','none','--user','1000:1000','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','128m','--memory-swap','128m','--cpus','0.35','--pids-limit','64','--tmpfs','/tmp:rw,noexec,nosuid,size=16m','--mount','type=bind,src='+str(RELEASE)+',dst=/app,readonly','--entrypoint','node']
+ tests=run(['docker','run','--rm']+common+[IMAGE,'--test','--test-reporter=tap','/app/tests/lead-chatgpt-host.test.mjs'],timeout=90).decode()
+ counts=re.findall(r'^# tests (\d+)$',tests,re.M);need(len(counts)==1,'test_count_unavailable');test_count=int(counts[0])
+ if not p['apply']:
+  print(json.dumps({'status':'PERSONAL_CHATGPT_HOST_PREPARED','bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'image':IMAGE,'isolatedTests':test_count,'identityDependencyVerified':True}));return
  if previous.exists():
   receipt=json.loads(previous.read_text());need(receipt['bundleSha256']==p['bundle'] and inspect(NAME)['State']['Running'],'existing_service_requires_review');receipt['identityDependencyVerified']=True;write(previous,json.dumps(receipt,indent=2));print(json.dumps(receipt));return
  need(hashlib.sha256(NGINX.read_bytes()).hexdigest()==EXPECTED,'shared_nginx_changed')
  need(subprocess.run(['docker','inspect',NAME],stdout=subprocess.PIPE,stderr=subprocess.PIPE).returncode!=0,'service_already_exists')
- common=['--network','none','--user','1000:1000','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','128m','--memory-swap','128m','--cpus','0.35','--pids-limit','64','--tmpfs','/tmp:rw,noexec,nosuid,size=16m','--mount','type=bind,src='+str(RELEASE)+',dst=/app,readonly','--entrypoint','node']
- run(['docker','run','--rm']+common+[IMAGE,'--test','/app/tests/lead-chatgpt-host.test.mjs'],timeout=90)
- if not p['apply']:
-  print(json.dumps({'status':'PERSONAL_CHATGPT_HOST_PREPARED','bundleSha256':p['bundle'],'isolatedTests':10}));return
  for port in (47922,47923):
   s=socket.socket();need(s.connect_ex(('127.0.0.1',port))!=0,'loopback_port_in_use');s.close()
  others={n:inspect(n)['Id'] for n in ('n8n','vertux-workspace-trainer','vertux-invest-ai','amnezia-awg2')}
@@ -126,7 +127,7 @@ def main():
    time.sleep(.5)
   else:raise RuntimeError('network_caller_gate_failed_'+str(observed[-1]))
   for name,cid in others.items():need(inspect(name)['Id']==cid and inspect(name)['State']['Running'],'existing_service_changed')
-  receipt={'status':'PERSONAL_CHATGPT_HOST_DEPLOYED_LOGIN_PENDING','at':stamp,'image':IMAGE,'containerId':inspect(NAME)['Id'],'bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'backupPath':str(backup),'nginxBeforeSha256':EXPECTED,'nginxAfterSha256':hashlib.sha256(candidate).hexdigest(),'isolatedTests':10,'identityDependencyVerified':True,'memoryLimitMb':128,'dailyRequestCap':10,'modelRequests':0,'ownerSignInVerified':False,'existingContainersUnchanged':True}
+  receipt={'status':'PERSONAL_CHATGPT_HOST_DEPLOYED_LOGIN_PENDING','at':stamp,'image':IMAGE,'containerId':inspect(NAME)['Id'],'bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'backupPath':str(backup),'nginxBeforeSha256':EXPECTED,'nginxAfterSha256':hashlib.sha256(candidate).hexdigest(),'isolatedTests':test_count,'identityDependencyVerified':True,'memoryLimitMb':128,'dailyRequestCap':10,'modelRequests':0,'ownerSignInVerified':False,'existingContainersUnchanged':True}
   write(previous,json.dumps(receipt,indent=2));print(json.dumps(receipt))
  except:
   if NGINX.read_bytes()==candidate:write(NGINX,old,0o644);run(['nginx','-t']);run(['systemctl','reload','nginx'])
