@@ -32,6 +32,7 @@ export async function createDatabase(dataDir) {
   await db.exec(await readFile(new URL('../../supabase/migrations/20261008082314_workspace_finance_isolation.sql',import.meta.url),'utf8'));
   try { await db.exec(await readFile(new URL('../../supabase/migrations/20261010004715_workspace_lead_intelligence.sql',import.meta.url),'utf8')); }
   catch (e) { await db.close(); throw new Error(`Lead migration: ${e.message} (${e.code}); ${e.where || ''}`); }
+  await db.exec(await readFile(new URL('../../supabase/migrations/20261011185814_workspace_lead_batches_archive.sql',import.meta.url),'utf8'));
   for (const [id,role,org] of [[ownerId,'owner',organizationId],[managerId,'manager',organizationId],[viewerId,'viewer',organizationId],[foreignId,'owner',uuid(999)]]) {
     await db.query('INSERT INTO auth.users(id,raw_app_meta_data) VALUES($1,$2)',[id,{role,nexus_managed:true,nexus_access:'active',nexus_organization_id:org,nexus_product_id:productId}]);
   }

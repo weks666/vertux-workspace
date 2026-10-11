@@ -14,13 +14,13 @@
   const client={from(table){
     const financeTable=table==='workspace_project_finance';
     let patch=null,insert=null,filters=[],columns='*',range=null;
-    const query={select(c){columns=c;return this;},order(){return this;},range(a,b){range=[a,b];return this;},eq(k,v){filters.push([k,v]);return this;},is(k,v){filters.push([k,v]);return this;},update(v){patch=v;return this;},insert(v){insert=v;return this;},single(){return execute(true);},maybeSingle(){return execute(true);},then(resolve,reject){return execute(false).then(resolve,reject);}};
+    const query={select(c){columns=c;return this;},order(){return this;},range(a,b){range=[a,b];return this;},eq(k,v){filters.push([k,v]);return this;},in(k,v){filters.push([k,v]);return this;},is(k,v){filters.push([k,v]);return this;},update(v){patch=v;return this;},insert(v){insert=v;return this;},single(){return execute(true);},maybeSingle(){return execute(true);},then(resolve,reject){return execute(false).then(resolve,reject);}};
     async function execute(single){
       if(state.failDB)return {data:null,error:{message:'Изолированная ошибка базы'}};
       if(financeTable&&(manager||viewer))return {data:single?null:[],error:(patch||insert)?{code:'42501',message:'Нет доступа к деньгам'}:null};
       const source=financeTable?finances:rows;
       if(insert)for(const row of Array.isArray(insert)?insert:[insert])source.push({...clone(row),...(financeTable?{}:{id:'fixture-'+crypto.randomUUID()}),updated_at:row.updated_at||new Date().toISOString()});
-      let matched=source.filter(r=>filters.every(([k,v])=>r[k]===v));
+      let matched=source.filter(r=>filters.every(([k,v])=>Array.isArray(v)?v.includes(r[k]):r[k]===v));
       if(range)matched=matched.slice(range[0],range[1]+1);
       if(patch)matched.forEach(r=>Object.assign(r,clone(patch)));
       const result=matched.map(r=>columns.startsWith('*,finance:')?{...r,finance:manager||viewer?null:finances.find(f=>f.project_id===r.id)||null}:columns==='*'?r:Object.fromEntries(columns.split(',').map(k=>[k,r[k]])));
