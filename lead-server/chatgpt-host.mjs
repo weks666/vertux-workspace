@@ -57,6 +57,7 @@ function failureDiagnostic(error){
   if(typeof error?.requestId==='string'&&/^[a-zA-Z0-9_-]{1,160}$/.test(error.requestId))result.requestId=error.requestId;
   if(['text/event-stream','application/json','text/plain','text/html','application/octet-stream','other','missing'].includes(error?.contentType))result.contentType=error.contentType;
   if(['error_object','detail_text','completed_event','response_object','json_object','json_array','sse_text','html','text','empty','sse:response.failed','sse:error'].includes(error?.bodyShape))result.bodyShape=error.bodyShape;
+  if(['invalid_output_array','unsupported_item','invalid_message','invalid_content','empty_text','empty_output','incomplete_item'].includes(error?.outputShape))result.outputShape=error.outputShape;
   return result;
 }
 export function createChatGPTHostHandler({key,credentials,provider,ledger,now=Date.now,onDiagnostic=()=>{}}){

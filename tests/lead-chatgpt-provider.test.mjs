@@ -204,6 +204,35 @@ test('missing Content-Type still requires a fully completed SSE response and act
   assert.equal((await rejectsCode(denied.provider.complete('auto', prompt), 'subscription_sharing_usage_limit_exceeded')).pause, true);
 });
 
+test('completed SSE can use finalized output items omitted from its terminal event', async () => {
+  const item = { id: 'msg_fixture', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '{"ok":true}' }] };
+  const done = event({ type: 'response.output_item.done', output_index: 1, item });
+  for (const output of [undefined, [], [{type:'reasoning'}]]) {
+    const f = fixture({ response: () => sse(done + event(completed('', {output}))) });
+    assert.equal((await f.provider.complete('auto', prompt)).text, '{"ok":true}');
+  }
+  const canonical = fixture({ response: () => sse(done + event(completed('{"canonical":true}'))) });
+  assert.equal((await canonical.provider.complete('auto', prompt)).text, '{"canonical":true}');
+  const partial = event({type:'response.output_text.delta',delta:'partial'});
+  const failed = event({type:'response.failed',response:{error:{code:'subscription_sharing_usage_unavailable'}}});
+  for (const [stream, code] of [
+    [done, 'chatgpt_stream_interrupted'],
+    [done + failed, 'subscription_sharing_usage_unavailable'],
+    [partial + event(completed('', {output:[]})), 'chatgpt_output_invalid'],
+    [done + event(completed('', {output:[],usage:null})), 'chatgpt_usage_unverified'],
+    [done + done + event(completed('', {output:[]})), 'chatgpt_invalid_stream'],
+    [event({type:'response.output_item.done',output_index:1,item:{...item,status:'incomplete'}}), 'chatgpt_output_invalid'],
+    [event({type:'response.output_item.done',output_index:1,item:{type:'function_call'}}), 'chatgpt_output_invalid'],
+    [event({type:'response.output_item.done',output_index:1,item:{...item,content:[{type:'refusal',refusal:'refused'}]}}), 'chatgpt_response_refused'],
+  ]) {
+    const invalid = fixture({response:()=>sse(stream)});
+    await rejectsCode(invalid.provider.complete('auto', prompt), code);
+  }
+  const longItem = {...item,content:[{type:'output_text',text:'x'.repeat(100)}]};
+  const tooLong = fixture({maxOutputChars:64,response:()=>sse(event({type:'response.output_item.done',output_index:0,item:longItem}))});
+  await rejectsCode(tooLong.provider.complete('auto',prompt),'chatgpt_output_too_large');
+});
+
 test('partial, incomplete, refused and failed responses never produce generated text', async () => {
   const delta = event({ type: 'response.output_text.delta', delta: 'private partial material' });
   const cases = [

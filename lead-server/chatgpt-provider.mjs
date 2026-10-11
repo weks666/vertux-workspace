@@ -174,19 +174,22 @@ function usageFromResponse(response, required = true) {
 }
 
 function completedOutput(response, maxOutputChars) {
-  if (!Array.isArray(response.output) || response.output.length > 64) throw error('chatgpt_output_invalid');
+  const invalid = outputShape => error('chatgpt_output_invalid', 502, { outputShape });
+  if (!Array.isArray(response.output) || response.output.length > 64) throw invalid('invalid_output_array');
   const texts = [];
   for (const item of response.output) {
     if (item?.type === 'reasoning') continue;
-    if (item?.type !== 'message' || item.role !== 'assistant' || !Array.isArray(item.content) || item.content.length > 32) throw error('chatgpt_output_invalid');
+    if (item?.type !== 'message') throw invalid('unsupported_item');
+    if (item.role !== 'assistant' || !Array.isArray(item.content) || item.content.length > 32) throw invalid('invalid_message');
     for (const content of item.content) {
       if (content?.type === 'refusal') throw error('chatgpt_response_refused', 422);
-      if (content?.type !== 'output_text' || typeof content.text !== 'string') throw error('chatgpt_output_invalid');
+      if (content?.type !== 'output_text' || typeof content.text !== 'string') throw invalid('invalid_content');
       texts.push(content.text);
     }
   }
   const text = texts.join('');
-  if (!text.trim() || text.length > maxOutputChars) throw error(text.length > maxOutputChars ? 'chatgpt_output_too_large' : 'chatgpt_output_invalid');
+  if (!text.trim()) throw invalid(response.output.length ? 'empty_text' : 'empty_output');
+  if (text.length > maxOutputChars) throw error('chatgpt_output_too_large');
   return text;
 }
 
@@ -213,6 +216,7 @@ async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, 
   }
   const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8', { fatal: true });
   const details = { ...requestDetails(response), contentType: streamType ? 'text/event-stream' : 'missing' };
+  const doneItems = new Map(); let doneChars = 0;
   let bytes = 0, line = '', eventName = '', data = [], dataChars = 0, afterCR = false, events = 0, deltaChars = 0, terminal = null;
   const dispatch = () => {
     if (!data.length) { eventName = ''; return; }
@@ -235,9 +239,25 @@ async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, 
       deltaChars += event.delta.length;
       if (deltaChars > maxOutputChars) throw error('chatgpt_output_too_large');
     }
+    if (event.type === 'response.output_item.done') {
+      if (!Number.isInteger(event.output_index) || event.output_index < 0 || event.output_index >= 64 || doneItems.has(event.output_index)) throw error('chatgpt_invalid_stream');
+      const item = event.item;
+      if (item?.type !== 'reasoning') {
+        if (item?.type === 'message' && item.status !== 'completed') throw error('chatgpt_output_invalid', 502, { outputShape: 'incomplete_item' });
+        doneChars += completedOutput({ output: [item] }, maxOutputChars).length;
+        if (doneChars > maxOutputChars) throw error('chatgpt_output_too_large');
+      }
+      doneItems.set(event.output_index, item);
+    }
     if (event.type === 'response.completed') {
       if (event.response?.status !== 'completed' || event.response.error) throw error('chatgpt_invalid_stream');
-      terminal = { text: completedOutput(event.response, maxOutputChars), usage: usageFromResponse(event.response), billing: 'chatgpt_plan', cost: null,
+      // Some direct streams deliver final items only in output_item.done; the
+      // terminal event confirms status and usage without repeating their text.
+      // Partial deltas alone are never an accepted replacement for final items.
+      const output = event.response.output;
+      const finalItems = output === undefined || (Array.isArray(output) && output.every(item => item?.type === 'reasoning'))
+        ? [...doneItems.entries()].sort(([a], [b]) => a - b).map(([, item]) => item) : output;
+      terminal = { text: completedOutput({ output: finalItems }, maxOutputChars), usage: usageFromResponse(event.response), billing: 'chatgpt_plan', cost: null,
         requestId: details.requestId, responseId: safeId(event.response.id) };
     }
   };
