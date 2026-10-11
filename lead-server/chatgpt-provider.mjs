@@ -191,7 +191,11 @@ function completedOutput(response, maxOutputChars) {
 }
 
 async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, now }) {
-  if (!/^text\/event-stream(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
+  const streamType = response.headers.get('content-type');
+  // The direct route can omit Content-Type. In that case require the same
+  // complete SSE framing, terminal event and verified usage as a typed stream.
+  // An explicitly different media type is still an admission/protocol error.
+  if (streamType && !/^text\/event-stream(?:\s*;|\s*$)/i.test(streamType)) {
     // Admission errors can arrive before SSE. Keep bounded, non-content
     // diagnostics; never turn a non-stream JSON response into model success.
     const media = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -208,7 +212,7 @@ async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, 
     throw error('chatgpt_stream_required', 502, { ...details, bodyShape, retryable: false, recovery: 'fix_integration' });
   }
   const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8', { fatal: true });
-  const details = requestDetails(response);
+  const details = { ...requestDetails(response), contentType: streamType ? 'text/event-stream' : 'missing' };
   let bytes = 0, line = '', eventName = '', data = [], dataChars = 0, afterCR = false, events = 0, deltaChars = 0, terminal = null;
   const dispatch = () => {
     if (!data.length) { eventName = ''; return; }
@@ -269,7 +273,7 @@ async function consumeSSE(response, { signal, maxResponseBytes, maxOutputChars, 
     return terminal;
   } catch (cause) {
     if (signal.aborted) throw signal.reason;
-    if (cause instanceof LeadError) throw cause;
+    if (cause instanceof LeadError) { Object.assign(cause, details); throw cause; }
     throw error('chatgpt_stream_interrupted', 502, { ...details, retryable: false, recovery: 'request_interrupted' });
   } finally { cancelBody(reader); try { reader.releaseLock(); } catch {} }
 }

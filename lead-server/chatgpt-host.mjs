@@ -55,7 +55,7 @@ function failureDiagnostic(error){
   const result={event:'chatgpt_inference_failed',code:publicCode(error,'chatgpt_host_unavailable')};
   if(Number.isInteger(error?.httpStatus)&&error.httpStatus>=100&&error.httpStatus<=599)result.httpStatus=error.httpStatus;
   if(typeof error?.requestId==='string'&&/^[a-zA-Z0-9_-]{1,160}$/.test(error.requestId))result.requestId=error.requestId;
-  if(['application/json','text/plain','text/html','application/octet-stream','other','missing'].includes(error?.contentType))result.contentType=error.contentType;
+  if(['text/event-stream','application/json','text/plain','text/html','application/octet-stream','other','missing'].includes(error?.contentType))result.contentType=error.contentType;
   if(['error_object','detail_text','completed_event','response_object','json_object','json_array','sse_text','html','text','empty','sse:response.failed','sse:error'].includes(error?.bodyShape))result.bodyShape=error.bodyShape;
   return result;
 }

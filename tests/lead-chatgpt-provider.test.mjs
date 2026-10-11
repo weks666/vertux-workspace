@@ -183,6 +183,27 @@ test('SSE accepts UTF-8 split across bytes, CRLF boundaries and only canonical c
   assert.equal(result.text, text); assert.equal(cancelled, true);
 });
 
+test('missing Content-Type still requires a fully completed SSE response and actual usage', async () => {
+  const untyped = body => new Response(new TextEncoder().encode(body));
+  // Real direct-route responses can exceed the small admission-error limit.
+  const stream = (': heartbeat\n\n'.repeat(3000)) + event(completed());
+  assert.ok(Buffer.byteLength(stream) > 32768);
+  const f = fixture({ response: () => untyped(stream) });
+  const result = await f.provider.complete('auto', prompt);
+  assert.equal(result.text, '{"ok":true}');
+  assert.deepEqual(result.usage, { prompt_tokens: 41, completion_tokens: 9, total_tokens: 50, cost: null });
+  assert.equal(f.state.calls.filter(call => call.url === RESPONSES).length, 1);
+  for (const body of [JSON.stringify(completed()), '<html>Not a stream</html>', event({type:'response.output_text.delta',delta:'Partial'})]) {
+    const invalid = fixture({ response: () => untyped(body) });
+    const error = await rejectsCode(invalid.provider.complete('auto', prompt), 'chatgpt_stream_interrupted');
+    assert.equal(error.contentType, 'missing'); assert.equal(error.httpStatus, 200);
+  }
+  const missingUsage = fixture({ response: () => untyped(event(completed('text', {usage:null}))) });
+  await rejectsCode(missingUsage.provider.complete('auto', prompt), 'chatgpt_usage_unverified');
+  const denied = fixture({ response: () => untyped(event({type:'response.failed',response:{error:{code:'subscription_sharing_usage_limit_exceeded'}}})) });
+  assert.equal((await rejectsCode(denied.provider.complete('auto', prompt), 'subscription_sharing_usage_limit_exceeded')).pause, true);
+});
+
 test('partial, incomplete, refused and failed responses never produce generated text', async () => {
   const delta = event({ type: 'response.output_text.delta', delta: 'private partial material' });
   const cases = [
