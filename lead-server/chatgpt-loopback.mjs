@@ -9,13 +9,15 @@ export async function createChatGPTLoopback({credentials,port=47922}){
   const headers={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://auth.openai.com; frame-ancestors 'none'; base-uri 'none'"};
   const html=(title,text,form='')=>`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><style>body{background:#101116;color:#e9e9ef;font:17px/1.6 system-ui;max-width:650px;margin:12vh auto;padding:24px}h1{font-size:28px}button{background:#fff;color:#111;border:0;border-radius:12px;padding:14px 22px;font:inherit;cursor:pointer}a{color:#b9c8ff}</style><h1>${title}</h1><p>${text}</p>${form}</html>`;
   const server=createServer(async(req,res)=>{
-    const send=(code,title,text,form)=>res.writeHead(code,headers).end(html(title,text,form));
+    const send=(code,title,text,form,extraHeaders)=>res.writeHead(code,{...headers,...extraHeaders}).end(html(title,text,form));
     if(req.headers.host!==`127.0.0.1:${port}`||!['127.0.0.1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress))return send(403,'Недоступно','Открой помощник через локальное подключение.');
     const url=new URL(req.url,origin);
     if(req.method==='GET'&&url.pathname==='/auth/health')return res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end('{"ready":true}');
-    if(req.method==='GET'&&url.pathname==='/')return send(200,'Подключить ChatGPT к Workspace','Это твой личный Workspace. После входа сервер сможет использовать разрешённые лимиты подписки. Сам вход не включает анализ компаний. Пароль вводится только на странице OpenAI.','<form method="post" action="/auth/start"><button type="submit">Продолжить с ChatGPT</button></form>');
+    // no-referrer makes a browser submit Origin: null on this navigation POST.
+    // Keep the form same-origin; OAuth redirects and callbacks retain no-referrer.
+    if(req.method==='GET'&&url.pathname==='/')return send(200,'Подключить ChatGPT к Workspace','Это твой личный Workspace. После входа сервер сможет использовать разрешённые лимиты подписки. Сам вход не включает анализ компаний. Пароль вводится только на странице OpenAI.','<form method="post" action="/auth/start"><button type="submit">Продолжить с ChatGPT</button></form>',{'Referrer-Policy':'same-origin'});
     if(req.method==='POST'&&url.pathname==='/auth/start'){
-      if(req.headers.origin!==origin)return send(403,'Вход не начат','Открой главную страницу локального помощника.');
+      if(req.headers.origin!==origin)return send(403,'Вход не начат','Открой главную страницу локального помощника.','<a href="/">Вернуться к началу входа</a>');
       try{
         const started=await credentials.begin({redirectUri:callback});
         const cookie=randomBytes(32).toString('hex');transaction={cookie,state:new URL(started.authorizationUrl).searchParams.get('state'),expiresAt:Date.now()+600000};
