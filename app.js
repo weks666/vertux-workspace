@@ -335,12 +335,11 @@
       ${chips.map(([k,l])=>`<button class="chip ${pFilter===k?'active':''}" data-filter="${k}">${l}</button>`).join('')}
       <span class="mut count">Показано ${Math.min(projectLimit,list.length)} из ${list.length}${list.length!==scope.length?' · в разделе '+scope.length:''}</span>
     </div>
-    <div class="panel tbl-wrap li-company-table" tabindex="0" role="region" aria-label="Таблица компаний, прокручивается по горизонтали"><table class="data leads"><thead><tr>
+    <div class="panel tbl-wrap li-company-table" tabindex="0" role="region" aria-label="Таблица компаний"><table class="data leads"><thead><tr>
       <th class="c-co">Компания</th>
-      <th>О компании и предложение</th><th>Приоритет и причина</th><th>Контакты и источники</th><th>Проверка и прогон</th>
+      <th class="c-pr">Приоритет</th>
       <th class="c-st">Стадия</th>
-      <th class="c-nt">Заметка</th>
-
+      <th class="c-nt">Заметка</th><th class="c-actions">Демо</th>
     </tr></thead><tbody>
       ${list.slice(0,projectLimit).map(p=>{
         const k=stageOf(p), n=window.VC.callsOf(p).length;
@@ -349,16 +348,17 @@
         <td class="c-co"><div class="co">
           <div class="logo ${STAGES[k].cls}">${esc(initials(p.company))}</div>
           <div class="co-t"><span class="cn">${esc(p.company)}</span>
-            <span class="csub">${esc(p.niche||'—')}${p.city?' · '+esc(p.city):''}</span><span class="csub">${esc(p.address||'Адрес не уточнён')}</span></div>
+            <span class="csub" title="${esc(p.niche||'')}">${esc(p.city||p.niche||'—')}${p.phone?' · '+esc(p.phone):''}</span>${!p.site?`<span class="csub">${esc(p.raw?._researchBrief?.siteStatus==='social_only'?'Соцсети / мини-сайт':'Собственный сайт не найден')}</span>`:''}</div>
           ${isDue(p)?`<span class="due-badge" title="перезвонить ${fmtDay(nextCallOf(p))}">🔔 ${fmtDay(nextCallOf(p))}</span>`:''}
           ${n?`<span class="calls-badge" title="звонков: ${n}">${n}</span>`:''}
         </div></td>
         ${window.VCLead.listCells(p)}
-        <td>${canEdit?`<select class="stage-sel ${STAGES[k].cls}" data-stage="${esc(p.id)}">
+        <td class="c-st" data-label="Стадия">${canEdit?`<select class="stage-sel ${STAGES[k].cls}" data-stage="${esc(p.id)}">
             ${Object.entries(STAGES).map(([sk,v])=>`<option value="${sk}"${sk===k?' selected':''}>${v.label}</option>`).join('')}
           </select>`:stagePill(p)}</td>
-        <td class="c-nt">${canEdit?`<input class="note-in" data-note="${esc(p.id)}" value="${esc(p.notes||'')}" placeholder="пара слов…" maxlength="120" />`
+        <td class="c-nt" data-label="Заметка">${canEdit?`<input class="note-in" data-note="${esc(p.id)}" value="${esc(p.notes||'')}" placeholder="пара слов…" maxlength="120" />`
           :`<span class="mut">${esc(p.notes||'—')}</span>`}</td>
+        <td class="c-actions">${canEdit?`<button class="mini" data-li-open="${esc(p.id)}" data-li-open-tab="demo">Подготовить демо</button>`:demoUrl?`<a class="mini" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Открыть демо</a>`:'—'}</td>
       </tr>`;}).join('')}
     </tbody></table>${!list.length?'<p class="li-message">Нет компаний по выбранным фильтрам.</p>':''}</div>${list.length>projectLimit?'<button class="btn" id="projectsMore" style="margin-top:12px">Показать ещё 300</button>':''}`;
   };
@@ -964,16 +964,18 @@
     const pending=PENDING_CALL.get(String(p.id));
     const last=lastCall(p);
     const msg=$('#outMsg');
-    if(!pending&&!last){ if(msg) msg.textContent='сначала нажми «Набрать»'; return; }
+    if(!USER?.can?.edit)return;
+    const dateValue=$('#callOccurredAt')?.value;const occurred=dateValue?new Date(dateValue):new Date();
+    if(!Number.isFinite(occurred.getTime())||occurred.getTime()>Date.now()+60000){if(msg)msg.textContent='Укажи дату уже состоявшегося звонка.';return;}
+    const entry=pending||{id:window.crypto.randomUUID(),at:occurred.toISOString(),by:USER.name||USER.email||'—',by_id:USER.id,kind:'manual'};
+    const note=String($('#callResultNote')?.value||'').trim().slice(0,1000);
     OUTCOME_SAVING.add(String(p.id));
     $$('.out').forEach(b=>b.disabled=true);
     try{
-      if(pending){
-        await window.VC.logCall(p,{...pending,out:key});
-        PENDING_CALL.delete(String(p.id));
-      }else{
-        await window.VC.saveRaw(p,raw=>({calls:(raw.calls||[]).map(c=>(last.id?c.id===last.id:c.at===last.at)?{...c,out:key}:c)}));
-      }
+      if(pending?.editing){
+        await window.VC.saveRaw(p,raw=>({calls:(raw.calls||[]).map(c=>c.id===pending.id?{...c,out:key,note}:c)}));
+      }else await window.VC.logCall(p,{...entry,at:occurred.toISOString(),out:key,note});
+      PENDING_CALL.delete(String(p.id));
     }catch(e){
       if(msg){ msg.textContent='не сохранилось: '+(e.message||e); msg.style.color='var(--red)'; }
       OUTCOME_SAVING.delete(String(p.id));
@@ -1083,15 +1085,18 @@
           <div id="stageMsg" class="mut" style="font-size:12px;margin-top:6px">прогресс пересчитается сам</div>`
           :`<div class="dr-sec">Стадия</div><div>${stagePill(p)}</div>`}
 
-        ${canEdit&&p.phone?`<div class="dr-sec">Звонок</div>
-          <div class="row-inline"><button class="btn gold" id="callBtn">Набрать ${esc(p.phone)}</button><button class="btn" id="copyPhone">Скопировать номер</button><button class="btn" id="manualCall">Записать ручной звонок</button></div>
-          <p class="status-line" id="dialMsg" role="status">Номер передаётся программе звонков в Windows. Перед первым звонком подключи её по инструкции.</p>
+        ${canEdit?`<div class="dr-sec">Звонок</div>
+          <div class="row-inline">${p.phone?`<button class="btn" id="callBtn">Набрать ${esc(p.phone)}</button>`:''}<button class="btn" id="copyPhone">Скопировать номер</button><button class="btn" id="manualCall">Записать ручной звонок</button></div>
+          <p class="status-line" id="dialMsg" role="status">Позвони с обычного телефона или через компьютер и отметь итог здесь.</p>
           ${telephonyHelp(true)}
-          <div id="outcomeBox" class="outcomes${(pending||last)?' live':''}">
-            <div class="mut" style="font-size:12px;margin:10px 0 8px">Чем закончился звонок?</div>
+          <div id="outcomeBox" class="outcomes live">
+            <div class="mut" style="font-size:12px;margin:10px 0 8px">${pending?.editing?'Исправить последний итог':'Чем закончился звонок?'}</div>
+            <label class="li-call-date">Когда звонили<input type="datetime-local" id="callOccurredAt" value="${new Date((pending?.at?new Date(pending.at).getTime():Date.now())-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)}" /></label>
+            <input id="callResultNote" maxlength="1000" placeholder="Коротко о разговоре (необязательно)" aria-label="Заметка о звонке" value="${esc(pending?.note||'')}" />
             <div class="out-row">${Object.entries(OUTCOMES).map(([k,v])=>
-              `<button class="out ${!pending&&last&&last.out===k?'on':''}" data-out="${k}">${v.ic} ${v.label}</button>`).join('')}</div>
-            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${pending?'Запись появится после выбора итога фактического звонка.':last?'последний: '+esc(ago(last.at)):''}</div>
+              `<button class="out ${pending?.editing&&pending.out===k?'on':''}" data-out="${k}">${v.ic} ${v.label}</button>`).join('')}</div>
+            ${last?.id?`<button class="li-text-button" id="editLastOutcome">Исправить последний итог</button>`:''}
+            <div id="outMsg" class="mut" style="font-size:12px;margin-top:8px">${pending?.editing?'Изменится выбранный итог последнего звонка.':'Выбор итога сохранит новый звонок. Запускать звонок с компьютера не нужно.'}</div>
           </div>`:''}
 
         ${canEdit?`<div class="dr-sec">Запланировать звонок</div>
@@ -1137,7 +1142,7 @@
         <div class="dr-actions">
           ${siteUrl?`<a class="btn" href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer">Сайт ↗</a>`:''}
           ${demoUrl?`<a class="btn" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Демо ↗</a>`:''}
-          ${canEdit&&p.gen_prompt?`<button class="btn gold" id="demoBtn">${p.demo?'Заменить демку':'Сделать демку'}</button>`:''}
+          ${canEdit?`<button class="btn gold" id="demoBtn">Подготовить демо</button>`:''}
           ${canEdit?`<button class="btn" id="aiReviewBtn">🧾 ИИ-разбор звонка</button>`:''}
         </div>
       </div></div>`;
@@ -1169,7 +1174,8 @@
     const ncd=$('#ncDate');
     if(ncd) ncd.onchange=()=>{ if(!ncd.value) return; const d=new Date(ncd.value+'T10:00:00'); setNc(d.toISOString()); };
     const ncc=$('#ncClear'); if(ncc) ncc.onclick=()=>setNc(null);
-    const db_=$('#demoBtn'); if(db_) db_.onclick=()=>openDemoModal(p);
+    const db_=$('#demoBtn'); if(db_) db_.onclick=()=>window.VCLead.openCardTab(p.id,'demo');
+    const editLast=$('#editLastOutcome');if(editLast)editLast.onclick=()=>{PENDING_CALL.set(String(p.id),{...last,editing:true});openProject(p.id);};
     const ar=$('#aiReviewBtn');
     if(ar) ar.onclick=()=>{ TR.leadId=p.id; TR.tab='review'; closeDrawer(); go('trainer'); };
     $$('#drawer button[data-drdel]').forEach(b=>b.onclick=async()=>{

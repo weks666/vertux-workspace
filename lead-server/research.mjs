@@ -3,6 +3,7 @@ import { Parser } from 'htmlparser2';
 import { safeFetch, normalizePublicUrl, createRobotsGuard, ResearchFetchError, raceAbort } from './safe-fetch.mjs';
 import { scoreResearch } from './scoring.mjs';
 import { createBrowserRenderer } from './browser-renderer.mjs';
+import { inspectMarkup, buildSiteAudit } from './site-audit.mjs';
 
 const hash = value => createHash('sha256').update(String(value)).digest('hex');
 const clamp = (value, fallback, low, high) => Number.isFinite(Number(value)) ? Math.max(low, Math.min(high, Number(value))) : fallback;
@@ -120,7 +121,7 @@ export function extractPage(html, url, { checkedAt = new Date().toISOString(), m
     faq: /(?:частые вопросы|часто задаваемые|вопросы и ответы|\bfaq\b)/i.test(text),
   };
   return { url, title, text, contentHash: hash(text), checkedAt, status, durationMs, bytes, rendered,
-    description: meta.description || meta['og:description'] || '', links, features, technologies,
+    description: meta.description || meta['og:description'] || '', links, features, technologies, markupAudit: inspectMarkup(raw, url),
     etag: typeof headers.etag === 'string' ? headers.etag.slice(0, 512) : null,
     lastModified: typeof headers['last-modified'] === 'string' ? headers['last-modified'].slice(0, 512) : null,
     needsJavaScript: bodyText.length < 180 && /(?:<script\b|enable javascript|включите javascript|id=["'](?:root|app|__next)["'])/i.test(raw),
@@ -228,7 +229,7 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
     const maxChars = Math.floor(clamp(settings.maxInputTokens, 12000, 500, 40000) * 3);
     const staleDays = clamp(settings.staleDays, 30, 1, 365);
     const inputHash = hash(JSON.stringify([project.company, project.site, project.sites, project.source_url, project.phone, project.email, project.contacts]));
-    const configHash = hash(JSON.stringify({ kind, maxPages, maxChars, scoreWeights: settings.scoreWeights, industryProfiles: settings.industryProfiles, deepThreshold: settings.deepThreshold }));
+    const configHash = hash(JSON.stringify({ auditVersion: 1, kind, maxPages, maxChars, scoreWeights: settings.scoreWeights, industryProfiles: settings.industryProfiles, deepThreshold: settings.deepThreshold }));
     const old = previous?.schemaVersion === 1 ? previous : previous?.[kind];
     if (!force && old?.kind === kind && old.cache?.inputHash === inputHash && old.cache?.configHash === configHash && Date.parse(old.expiresAt) > now()) {
       return { ...structuredClone(old), score: scoreResearch(old, settings, { now: now() }), usage: { httpRequests: 0, browserPages: 0, cacheHits: old.pages?.length || 0, pagesAttempted: 0 }, cache: { ...old.cache, reused: true } };
@@ -251,7 +252,7 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
     }
     async function readPageUncached(url, { allowBrowser = true } = {}) {
       await robots.check(url);
-      const cached = previousPages.find(page => page.url === url && page.contentHash === hash(page.text) && page.features && page.links);
+      const cached = previousPages.find(page => page.url === url && page.contentHash === hash(page.text) && page.features && page.links && page.markupAudit);
       const freshQuick = kind === 'deep' && previous?.quick?.pages?.includes(cached) && Date.parse(previous.quick.expiresAt) > now() && previous.quick.cache?.inputHash === inputHash;
       if (!force && freshQuick) { usage.cacheHits++; return { ...structuredClone(cached), cached: true, cacheExpiresAt: previous.quick.expiresAt }; }
       const response = await request(url, { headers: cached ? { 'if-none-match': cached.etag, 'if-modified-since': cached.lastModified } : {} });
@@ -299,7 +300,7 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
         if (sourceIdentity.matched) for (const link of source.links) {
           if (/(?:официальн.{0,12}сайт|веб.?сайт|website|official.{0,12}site)/i.test(link.text) && !socialOrDirectory(new URL(link.url).hostname)) candidates.push({ url: link.url, source: 'public_link', trust: 0.65, sourceEvidence: evidence(source, link.text, 0.75) });
         }
-      } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', sourceUrl, cause.retryAt ? { retryAt: cause.retryAt } : {}); }
+      } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', sourceUrl, { ...(cause.retryAt ? { retryAt: cause.retryAt } : {}), ...(Number.isInteger(cause.status) ? { status: cause.status } : {}) }); }
     }
     if (!candidates.length) await discoverSource();
     let officialSite = { url: null, status: 'unknown', confidence: 0, reason: 'Подтверждённый официальный сайт не найден в карточке и доступных публичных ссылках.' };
@@ -330,7 +331,7 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
             evidence: [evidence(page, quoteFor(page, null), match.confidence), ...(contactPage ? [evidence(contactPage, quoteFor(contactPage, null), match.confidence)] : []), ...(candidate.sourceEvidence ? [candidate.sourceEvidence] : [])] };
         }
         if (verified) break;
-      } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', candidate.url, cause.retryAt ? { retryAt: cause.retryAt } : {}); if (cause.code === 'PAGE_BUDGET') break; }
+      } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', candidate.url, { ...(cause.retryAt ? { retryAt: cause.retryAt } : {}), ...(Number.isInteger(cause.status) ? { status: cause.status } : {}) }); if (cause.code === 'PAGE_BUDGET') break; }
     }
     if (chosen) acceptPage(chosen);
     if (corroboratingPage && pages.length < maxPages) acceptPage(corroboratingPage);
@@ -346,7 +347,7 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
           if (new URL(page.url).origin !== origin) { addLimit('EXTERNAL_REDIRECT', link.url); continue; }
           acceptPage(page);
           if (kind === 'deep') pending.push(...page.links.filter(next => new URL(next.url).origin === origin && !attempted.has(next.url)).sort((a, b) => pageRelevance(b) - pageRelevance(a)));
-        } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', link.url, cause.retryAt ? { retryAt: cause.retryAt } : {}); if (cause.code === 'RATE_LIMITED' || cause.code === 'HTTP_BUDGET') break; }
+        } catch (cause) { if (signal?.aborted) throw new ResearchFetchError('REQUEST_ABORTED'); addLimit(cause.code || 'REQUEST_FAILED', link.url, { ...(cause.retryAt ? { retryAt: cause.retryAt } : {}), ...(Number.isInteger(cause.status) ? { status: cause.status } : {}) }); if (cause.code === 'RATE_LIMITED' || cause.code === 'HTTP_BUDGET') break; }
       }
     }
     if (remainingChars < 500) addLimit('INPUT_LIMIT');
@@ -361,12 +362,14 @@ export function createResearcher({ fetcher = safeFetch, renderer, now = Date.now
     if (kind === 'deep' && officialSite.status === 'verified' && env.LEAD_PSI_ENABLED === '1') result.technical.pageSpeed = await pageSpeed(officialSite.url, { fetcher, signal, timeoutMs, onRequest, now, env });
     result.usage = { ...usage, pagesAttempted: pageAttempts };
     result.score = scoreResearch(result, settings, { now: now() });
+    result.audit = buildSiteAudit(result, { now: now() });
     return result;
   };
 }
 function pageRelevance(link) {
   const text = `${new URL(link.url).pathname} ${link.text}`;
-  if (/(?:logout|login|sign.?in|cart|checkout|basket|личный|кабинет|корзин|оплат|privacy|policy|terms|политик|\.pdf(?:$|\?))/i.test(text)) return 0;
+  if (/(?:logout|login|sign.?in|cart|checkout|basket|личный|кабинет|корзин|оплат|\.pdf(?:$|\?))/i.test(text)) return 0;
+  if (/(?:privacy|policy|terms|политик|персональн)/i.test(text)) return 7;
   if (/(?:contact|контакт|связ)/i.test(text)) return 10;
   if (/(?:booking|брони|reservation|menu|меню|services|услуг|rooms|номер|banquet|банкет)/i.test(text)) return 8;
   if (/(?:about|о нас|о компании|conference|конференц|faq|вопрос)/i.test(text)) return 5;

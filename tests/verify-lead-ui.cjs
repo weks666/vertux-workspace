@@ -138,7 +138,7 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'evidence/lead-intell
     });
     await test('Incremental summary pages update earlier companies without discarding unchanged records',async()=>{
       await page.evaluate(()=>{const lead=window.__fixture.lead.leads.find(l=>l.project_id==='fixture-1');lead.status='researching';lead.updated_at=new Date().toISOString();});await page.evaluate(()=>window.VCLead.refresh(true));await nav('projects');
-      assert.equal(await page.locator('tr[data-id]').count(),4);assert.match(await page.locator('tr[data-id=fixture-1] .li-state-cell').innerText(),/Исследуется/);
+      assert.equal(await page.locator('tr[data-id]').count(),4);await page.locator('[data-li-filter=status]').selectOption('running');assert.equal(await page.locator('tr[data-id=fixture-1]').count(),1);await page.locator('[data-li-action=reset-filters]').click();
       assert.ok(await page.evaluate(()=>window.__fixture.lead.requests.some(r=>r.action==='overview'&&r.since)));
       await page.evaluate(()=>{const lead=window.__fixture.lead.leads.find(l=>l.project_id==='fixture-1');lead.status='complete';lead.updated_at=new Date().toISOString();});await page.evaluate(()=>window.VCLead.refresh(true));await nav('intelligence');
     });

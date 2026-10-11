@@ -83,8 +83,15 @@ export function createLeadHandler({config,store,authenticate,chatgpt=null,now=Da
         }
         case 'detail':{const result=await db.detail(identifier(body.projectId));return reply(200,{ok:true,...result,capabilities});}
         case 'enqueue':{
-          if(!['quick','deep'].includes(body.kind)||body.force!==undefined&&typeof body.force!=='boolean')fail('invalid_job');
-          if(body.kind==='deep'&&chatgpt&&!canManageChatGPT&&(await db.getSettings()).aiProvider==='chatgpt_plan')fail('chatgpt_owner_required',403);
+          if(!['quick','deep','demo'].includes(body.kind)||body.force!==undefined&&typeof body.force!=='boolean')fail('invalid_job');
+          if(['deep','demo'].includes(body.kind)&&chatgpt&&!canManageChatGPT&&(await db.getSettings()).aiProvider==='chatgpt_plan')fail('chatgpt_owner_required',403);
+          if(body.kind==='demo'){
+            if(!canManageChatGPT)fail('chatgpt_owner_required',403);
+            const current=await db.getSettings();
+            if(!current.aiEnabled)fail('ai_disabled',409);
+            if(current.aiProvider!=='chatgpt_plan')fail('chatgpt_connection_required',409);
+            if(!current.demoModel)fail('chatgpt_model_required',409);
+          }
           const job=await db.enqueue(identifier(body.projectId),body.kind,{force:body.force===true,priority:body.kind==='deep'?100:80,manual:true});return reply(200,{ok:true,job});
         }
         case 'job':{
@@ -98,7 +105,7 @@ export function createLeadHandler({config,store,authenticate,chatgpt=null,now=Da
           const current={...structuredClone(DEFAULT_SETTINGS),...await db.getSettings()};
           if((body.settings?.aiProvider==='chatgpt_plan'||current.aiProvider==='chatgpt_plan')&&!canManageChatGPT)fail('chatgpt_owner_required',403);
           const nextProvider=body.settings?.aiProvider??current.aiProvider,nextAIEnabled=body.settings?.aiEnabled??current.aiEnabled;
-          const changesModel=['quickModel','deepModel'].some(key=>body.settings?.[key]!==undefined&&body.settings[key]!==current[key]);
+          const changesModel=['quickModel','deepModel','demoModel'].some(key=>body.settings?.[key]!==undefined&&body.settings[key]!==current[key]);
           if(nextProvider==='chatgpt_plan'&&(nextAIEnabled===true||changesModel))await loadChatGPTInfo();
           const settings=validateSettings(body.settings,{current,models:policy.models,chatgptModels:chatgptInfo.models.map(m=>m.id),chatgptAvailable:chatgptInfo.planUsageEnabled&&canManageChatGPT,maxDailyPlanRequests:capabilities.maxDailyPlanRequests,aiAvailable:capabilities.aiAvailable,maxDailyBudgetUsd:capabilities.maxDailyBudgetUsd,maxCompanyBudgetUsd:capabilities.maxCompanyBudgetUsd});
           if(settings.aiEnabled&&settings.aiProvider==='chatgpt_plan')await chatgpt.provider.clearUsageBlock?.(request.signal);

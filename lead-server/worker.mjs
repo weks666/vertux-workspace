@@ -3,6 +3,7 @@ import {generateSalesMaterials} from './ai.mjs';
 import {composeMaterials} from './sales.mjs';
 import {LeadError,publicCode} from './errors.mjs';
 import {DEFAULT_SETTINGS} from './settings.mjs';
+import {generateDemo} from './demo.mjs';
 
 export function createLeadWorker({store,researchCompany,provider=null,providers=null,budgetCaps=null,workerId=randomUUID(),pollMs=5000,heartbeatMs=15000,jobTimeoutMs=240000,notice=()=>{},now=Date.now}){
   const active=new Map();let timer=null,ticking=false,stopping=false,lastSchedule=-Infinity,tickFinished=Promise.resolve();
@@ -17,6 +18,12 @@ export function createLeadWorker({store,researchCompany,provider=null,providers=
       catch{controller.abort(new Error('lease_lost'));}finally{beating=false;}
     },heartbeatMs);pulse.unref?.();
     try{
+      if(job.kind==='demo'){
+        const result=await generateDemo({project:job.project,research:job.previous?.deep||job.previous?.quick,settings,job,store,provider:providers?providers[settings.aiProvider]:provider,signal:controller.signal});
+        controller.signal.throwIfAborted();
+        await store.complete(job.id,job.worker_id,result);
+        notice({code:'lead_job_completed',jobId:job.id,kind:'demo',aiStatus:result.ai.status});return;
+      }
       const result=await researchCompany(job.project,{kind:job.kind,settings,previous:job.force?null:job.previous,force:job.force===true,signal:controller.signal});
       if(controller.signal.aborted)throw controller.signal.reason;
       if(!result.pages?.length){
@@ -55,7 +62,7 @@ export function createLeadWorker({store,researchCompany,provider=null,providers=
       for(let i=0;i<slots&&!stopping;i++){
         const job=await store.claim(workerId);if(!job)break;
         if(stopping){await store.fail(job.id,job.worker_id,'worker_stopped');break;}
-        if(!job.project?.id||!['quick','deep'].includes(job.kind)||!job.worker_id){await store.fail(job.id,job.worker_id,'invalid_job');continue;}
+        if(!job.project?.id||!['quick','deep','demo'].includes(job.kind)||!job.worker_id){await store.fail(job.id,job.worker_id,'invalid_job');continue;}
         const promise=processJob(job,settings);const record=active.get(job.id);if(record)record.promise=promise;
       }
     }catch(error){notice({code:publicCode(error),component:'lead_worker'});}

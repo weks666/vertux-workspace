@@ -5,6 +5,7 @@ workspace-core.js
 outreach.js
 data.js
 auth.js
+lead-sales-kit.js
 lead-intelligence.js
 app.js
 sw.js

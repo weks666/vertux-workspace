@@ -5,7 +5,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   deepThreshold:60, scheduleTime:'09:00', timezone:'Europe/Moscow', staleDays:30, retentionDays:90,
   concurrency:2, maxAttempts:3, maxPagesQuick:2, maxPagesDeep:6, requestTimeoutMs:12000,
   requestsPerHostDelayMs:1000, aiEnabled:false, aiProvider:'openrouter', dailyPlanRequests:10, quickModel:'openai/gpt-4.1-mini',
-  deepModel:'openai/gpt-4.1-mini', dailyBudgetUsd:0, companyBudgetUsd:0,
+  deepModel:'openai/gpt-4.1-mini', demoModel:'openai/gpt-4.1-mini', dailyBudgetUsd:0, companyBudgetUsd:0,
   maxInputTokens:12000, maxOutputTokens:1800,
   industryProfiles:['hotel','restaurant','banquet','general'],
   scoreWeights:{fit:25,opportunity:30,contacts:20,freshness:10,confidence:15},
@@ -26,7 +26,7 @@ export function validateSettings(patch,{current=DEFAULT_SETTINGS,models=['openai
       if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>cap||Math.round(value*1e6)!==value*1e6)fail('budget_above_server_limit');
     } else if(key==='scheduleTime'){if(typeof value!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(value))fail('invalid_schedule');}
     else if(key==='timezone'){try{if(typeof value!=='string'||value.length>80)throw Error();new Intl.DateTimeFormat('en',{timeZone:value}).format();}catch{fail('invalid_timezone');}}
-    else if(['quickModel','deepModel'].includes(key)){if(typeof value!=='string'||!([...models,...chatgptModels].includes(value)||value===current[key]))fail('model_not_allowed');}
+    else if(['quickModel','deepModel','demoModel'].includes(key)){if(typeof value!=='string'||!([...models,...chatgptModels].includes(value)||value===current[key]))fail('model_not_allowed');}
     else if(key==='industryProfiles'){if(!Array.isArray(value)||!value.length||value.length>4||new Set(value).size!==value.length||value.some(x=>!['hotel','restaurant','banquet','general'].includes(x)))fail('invalid_industry_profiles');}
     else if(key==='scoreWeights'){
       const keys=Object.keys(DEFAULT_SETTINGS.scoreWeights);

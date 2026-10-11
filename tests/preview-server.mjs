@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve,dirname,extname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-const assets=new Set(['index.html','styles.css','lead-intelligence.css','workspace-core.js','outreach.js','data.js','lead-intelligence.js','app.js','vendor/supabase.js','vendor/xlsx.full.min.js','manifest.webmanifest','icon.svg','tests/preview-fixture.js','tests/lead-ui-fixture.js']);
+const assets=new Set(['index.html','styles.css','lead-intelligence.css','workspace-core.js','outreach.js','data.js','lead-sales-kit.js','lead-intelligence.js','app.js','vendor/supabase.js','vendor/xlsx.full.min.js','manifest.webmanifest','icon.svg','tests/preview-fixture.js','tests/lead-ui-fixture.js']);
 export async function startPreview(port=47861){
   const serviceRoot=process.env.WORKSPACE_SERVICE_ASSETS||resolve(root,'../../projects/vertux-nexus/app/public/service-module/v1.2.3');
   const server=createServer(async(req,res)=>{

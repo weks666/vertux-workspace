@@ -6,6 +6,7 @@ import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {LeadError,fail,publicCode} from './errors.mjs';
 import {ANALYSIS_INSTRUCTIONS} from './ai.mjs';
+import {DEMO_INSTRUCTIONS} from './demo.mjs';
 import {createChatGPTCredentials} from './chatgpt-auth.mjs';
 import {createChatGPTProvider} from './chatgpt-provider.mjs';
 import {createChatGPTLoopback} from './chatgpt-loopback.mjs';
@@ -44,11 +45,13 @@ async function readBody(request){
   return body;
 }
 function validatePrompt(prompt){
-  if(!prompt||!Array.isArray(prompt.messages)||prompt.messages.length!==2||prompt.messages[0]?.role!=='system'||prompt.messages[0]?.content!==ANALYSIS_INSTRUCTIONS||prompt.messages[1]?.role!=='user'||typeof prompt.messages[1]?.content!=='string'||Buffer.byteLength(JSON.stringify(prompt))>32768)fail('chatgpt_prompt_invalid');
+  if(!prompt||!Array.isArray(prompt.messages)||prompt.messages.length!==2||prompt.messages[0]?.role!=='system'||![ANALYSIS_INSTRUCTIONS,DEMO_INSTRUCTIONS].includes(prompt.messages[0]?.content)||prompt.messages[1]?.role!=='user'||typeof prompt.messages[1]?.content!=='string'||Buffer.byteLength(JSON.stringify(prompt))>32768)fail('chatgpt_prompt_invalid');
   // No tools, arbitrary instructions, URLs to fetch or client-selected API routes.
   for(const item of prompt.messages)if(Object.keys(item).some(key=>!['role','content'].includes(key)))fail('chatgpt_prompt_invalid');
   let data;try{data=JSON.parse(prompt.messages[1].content);}catch{fail('chatgpt_prompt_invalid');}
-  if(typeof data.company!=='string'||data.company.length>160||!Array.isArray(data.facts)||!data.facts.length||data.facts.length>100||!Array.isArray(data.services)||Object.keys(data).some(k=>!['company','facts','services'].includes(k)))fail('chatgpt_prompt_invalid');
+  const demo=prompt.messages[0].content===DEMO_INSTRUCTIONS;
+  if(!data||typeof data.company!=='string'||data.company.length>160||!Array.isArray(data.facts)||!data.facts.length||data.facts.length>100||
+    (demo?(typeof data.industry!=='string'||data.industry.length>80):!Array.isArray(data.services))||Object.keys(data).some(k=>!(demo?['company','facts','industry']:['company','facts','services']).includes(k)))fail('chatgpt_prompt_invalid');
   return {messages:prompt.messages};
 }
 function failureDiagnostic(error){

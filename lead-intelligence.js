@@ -118,7 +118,7 @@
       changed.forEach(lead=>merged.set(String(lead.project_id),lead));
       state.snapshot={...result,leads:[...merged.values()]};state.watermark=result.serverTime||null;state.error='';
       syncEnqueueNotice(state,result.jobs);syncEnqueueNotice(state.card,result.jobs);
-      if(state.card?.tab==='research'&&state.card.mount.isConnected&&$('#drawer')?.classList.contains('open'))await loadDetail(state.card.project.id,true);
+      if(['research','audit','demo'].includes(state.card?.tab)&&state.card.mount.isConnected&&$('#drawer')?.classList.contains('open'))await loadDetail(state.card.project.id,true);
     }catch(error){state.error=friendlyError(error);state.errorCode=error.code;}
     finally{state.loading=false;notify();renderCard();schedulePoll();showPlanWelcome();}
   }
@@ -189,12 +189,8 @@
     });
   }
   function listCells(project){
-    const lead=leadOf(project.id),r=researchOf(lead),b=briefOf(project),score=lead?.score||r?.score,priority=score?.priority||'unknown';
-    const reason=arr(score?.reasons).join(' ')||b.priorityReason||'Причина ещё не определена.',sources=arr(b.sources),checked=lead?.checked_at||r?.checkedAt||b.checkedAt;
-    return `<td class="li-business-cell"><p>${esc(b.summary||r?.business?.description||'Подробности доступны в карточке компании.')}</p>${b.opportunity?`<p><b>Что предложить:</b> ${esc(b.opportunity)}</p><small class="mut">Гипотеза · потребность уточнить</small>`:''}<div class="li-row-actions"><button class="mini" data-li-open="${esc(project.id)}" data-li-open-tab="research">Факты и источники</button><button class="mini" data-li-open="${esc(project.id)}" data-li-open-tab="materials">Материалы</button></div></td>
-      <td class="li-priority-cell">${badge(score&&priority!=='unknown'?`${Number(score.total)||0} · ${PRIORITY[priority]||'Приоритет'}`:'Не определён',priority)}<p>${esc(reason)}</p><small>${esc(b.season||'Сезонность не оценена.')}</small></td>
-      <td class="li-contact-cell">${project.phone?`<p>${esc(project.phone)}</p>`:'<small>Телефон не найден</small>'}${project.email?`<p>${esc(project.email)}</p>`:'<small>Email не найден</small>'}<p>${project.site?safeLink(project.site,'Сайт'):esc(b.siteStatus==='social_only'?'Только соцсети / мини-страница':b.siteStatus==='not_found'?'Собственный сайт не найден':'Сайт не подтверждён')}</p>${arr(b.channels).map(c=>safeLink(c.url,c.label)).join(' · ')}${sources.length?`<details><summary>Источники · ${sources.length}</summary>${sources.map(s=>`<p>${safeLink(s.url,s.title||'Источник')}</p>`).join('')}</details>`:''}</td>
-      <td class="li-state-cell"><span>${esc(b.method==='curated'?'Подборка по открытым источникам':state.snapshot?statusLabel(statusOf(lead)):state.loading?'Загружаем…':'Результаты недоступны')}</span><small>${esc(checked?date(checked):'Ещё не проверено')}</small><p>${esc(servicesOf(lead).map(s=>s.label||SERVICES[s.id]||s.id).join(', ')||b.service||'Услуга не определена')}</p><small>${esc(project.lead_batch_name||'Прогон не указан')}</small></td>`;
+    const lead=leadOf(project.id),score=lead?.score||researchOf(lead)?.score,priority=score?.priority||'unknown';
+    return `<td class="c-pr" data-label="Приоритет" title="${esc(briefOf(project).priorityReason||'Открой карточку для объяснения')}">${badge(priority==='unknown'?'Нет оценки':PRIORITY[priority]||'Нет оценки',priority)}</td>`;
   }
   async function archiveProjects(list,archived){
     if(!canEdit()||state.busy||!list.length)return;
@@ -286,7 +282,8 @@
         ${c.requiresLocalConnection&&!c.connected&&canManagePlan?'<p class="mut li-caption">Вход выполняется на твоём компьютере. Ключи, коды входа и токены в Workspace вводить не нужно.</p>':''}
         ${canManagePlan?`<div class="row-inline">${button('Проверить подключение','chatgpt-status')}${c.connected?button('Отключить ChatGPT','chatgpt-disconnect'):''}</div>`:''}</div>`:!caps.aiAvailable?message('AI-провайдер не подключён на сервере. Платные запросы недоступны.'):''}
       <fieldset${locked?' disabled':''}><label class="li-checkbox"><input type="checkbox" name="aiEnabled"${settings.aiEnabled?' checked':''}${!available&&!settings.aiEnabled?' disabled':''}>Генерировать материалы с AI</label>
-      <div class="li-form-grid"><label>Модель Deep Research<select name="deepModel"${!models.length?' disabled':''}${settings.aiEnabled?' required':''}>${!modelExists?option('',''+(models.length?'Выбери модель аккаунта':'Появится после подключения'),''):''}${models.map(m=>option(m.id,m.label||m.id,settings.deepModel)).join('')}</select></label>
+      <div class="li-form-grid"><label>Модель исследования компаний<select name="deepModel"${!models.length?' disabled':''}${settings.aiEnabled?' required':''}>${!modelExists?option('',''+(models.length?'Выбери модель аккаунта':'Появится после подключения'),''):''}${models.map(m=>option(m.id,m.label||m.id,settings.deepModel)).join('')}</select></label>
+      ${plan?`<label>Модель демо-сайтов<select name="demoModel"${!models.length?' disabled':''}>${!models.some(m=>m.id===settings.demoModel)?option('','Выбери модель для демо',''):''}${models.map(m=>option(m.id,m.label||m.id,settings.demoModel)).join('')}</select></label>`:''}
       ${plan?numberField('dailyPlanRequests','AI-запросов приложения в день',1,planCap(),settings.dailyPlanRequests??10):numberField('dailyBudgetUsd','Бюджет в день, USD',0,Number(caps.maxDailyBudgetUsd)||0,settings.dailyBudgetUsd,0.000001)+numberField('companyBudgetUsd','Бюджет на компанию, USD',0,Number(caps.maxCompanyBudgetUsd)||0,settings.companyBudgetUsd,0.000001)}
       ${nums(['maxInputTokens','maxOutputTokens'])}</div></fieldset>
       <p class="mut li-caption">${plan?'Лимит Workspace — от 1 до '+planCap()+' AI-запросов в день. Он ограничивает это приложение, а не показывает остаток тарифа. Quick Scan в этот счётчик не входит. После подключения AI включается отдельно.':'Серверный потолок: '+usd(caps.maxDailyBudgetUsd)+' в день / '+usd(caps.maxCompanyBudgetUsd)+' на компанию за всю историю. Нулевой бюджет блокирует платную генерацию.'}</p></section>`;
@@ -314,6 +311,7 @@
     [...NUMBERS.map(n=>n[0]),'dailyBudgetUsd','companyBudgetUsd','dailyPlanRequests'].forEach(k=>{if(form.elements[k])result[k]=Number(form.elements[k].value);});
     ['scheduleTime','timezone','aiProvider'].forEach(k=>result[k]=form.elements[k].value.trim());
     if(form.elements.deepModel?.value)result.deepModel=form.elements.deepModel.value.trim();
+    if(form.elements.demoModel?.value)result.demoModel=form.elements.demoModel.value.trim();
     result.industryProfiles=$$('input[name="profile"]:checked',form).map(x=>x.value);
     result.scoreWeights=Object.fromEntries(Object.keys(WEIGHTS).map(k=>[k,Number(form.elements['weight_'+k].value)]));
     result.communication={mode:'drafts',dailySendLimit:0};return result;
@@ -367,7 +365,7 @@
     if(!state.busy&&card.mount.contains(document.activeElement)&&['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;
     const focusedTab=document.activeElement?.dataset.liCardTab;
     const openSections=new Set($$('details[open]',card.mount).map(el=>$('summary',el)?.textContent)),scroll=$('#drawer')?.scrollTop||0;
-    const tabs=[['crm','CRM'],['research','Исследование'],['materials','Материалы'],['history','История']];
+    const tabs=[['crm','CRM'],['research','Исследование'],['audit','Проверка сайта'],['demo','Демо'],['materials','Материалы'],['history','История']];
     card.tabs.innerHTML=tabs.map(([key,label])=>`<button type="button" role="tab" aria-selected="${card.tab===key}" tabindex="${card.tab===key?'0':'-1'}" aria-controls="${key==='crm'?'leadCardCrm':'leadCardMount'}" class="chip${card.tab===key?' active':''}" data-li-card-tab="${key}">${label}</button>`).join('');
     $$('[data-li-card-tab]',card.tabs).forEach(el=>el.onclick=()=>{
       card.tab=el.dataset.liCardTab;renderCard();$(`[data-li-card-tab="${card.tab}"]`,card.tabs)?.focus();
@@ -379,19 +377,20 @@
     const detail=state.details.get(String(card.project.id)),lead=detail?.lead||leadOf(card.project.id),status=detail?.error||card.error;
     card.mount.setAttribute('aria-busy',String(detail?.loading===true));
     const disabled=!canEdit()||!configured()||!state.snapshot||state.busy||lead?.excluded||lead?.opted_out;
-    const head=`<div class="li-card-heading"><h3>${card.tab==='research'?'Исследование компании':card.tab==='materials'?'Материалы для общения':'Ответы и история'}</h3>${card.tab==='research'?`<div class="row-inline">${button('Quick Scan','enqueue','data-kind="quick"',disabled)}${button('Deep Research','enqueue','data-kind="deep"',disabled||!canRunDeep(),true)}</div><p class="mut li-caption">Глубокое исследование доступно при любом приоритете. Актуальные результаты используются повторно.</p>${usesPlan()&&(state.snapshot.settings.aiEnabled||!canRunDeep())?`<p class="li-message">${canRunDeep()?'Подписка ChatGPT. Расходует лимиты твоей подписки.':'Ручной Deep Research с личной подпиской ChatGPT доступен только её владельцу.'} ${usageLink()}</p>`:''}${researchOf(lead)&&canEdit()?`<label class="li-checkbox"><input type="checkbox" id="liForceResearch"${card.forceResearch?' checked':''}${disabled?' disabled':''}>Обновить сохранённое исследование</label><p class="mut li-caption">Новая проверка учитывается в лимитах и бюджете.</p>`:''}`:''}</div>`;
+    const head=`<div class="li-card-heading"><h3>${card.tab==='research'?'Исследование компании':card.tab==='materials'?'Материалы для общения':card.tab==='audit'?'Проверка сайта':card.tab==='demo'?'Концепт сайта':'Ответы и история'}</h3>${card.tab==='research'?`<div class="row-inline">${button('Quick Scan','enqueue','data-kind="quick"',disabled)}${button('Deep Research','enqueue','data-kind="deep"',disabled||!canRunDeep(),true)}</div><p class="mut li-caption">Глубокое исследование доступно при любом приоритете. Актуальные результаты используются повторно.</p>${usesPlan()&&(state.snapshot.settings.aiEnabled||!canRunDeep())?`<p class="li-message">${canRunDeep()?'Подписка ChatGPT. Расходует лимиты твоей подписки.':'Ручной Deep Research с личной подпиской ChatGPT доступен только её владельцу.'} ${usageLink()}</p>`:''}${researchOf(lead)&&canEdit()?`<label class="li-checkbox"><input type="checkbox" id="liForceResearch"${card.forceResearch?' checked':''}${disabled?' disabled':''}>Обновить сохранённое исследование</label><p class="mut li-caption">Новая проверка учитывается в лимитах и бюджете.</p>`:''}`:''}</div>`;
     if(!configured()){card.mount.innerHTML=head+message('Сервис исследований ещё не подключён. После развёртывания здесь будут результаты, источники и материалы.');return;}
     if(detail?.loading&&!detail.loaded){card.mount.innerHTML=head+message('Загружаем карточку исследования…');return;}
     card.mount.innerHTML=head+(detail?.loading?message('Обновляем карточку…'):'')+(status?message(status,'error')+limitAction(detail?.error?detail.errorCode:card.errorCode):'')+(card.notice?message(card.notice):'')+(detail?.error?button('Повторить загрузку','reload-detail'):'')+
-      (card.tab==='research'?researchView(lead,detail):card.tab==='materials'?materialsView(lead):historyView(lead,detail));
+      (card.tab==='research'?researchView(lead,detail):card.tab==='audit'?auditView(lead,detail):card.tab==='demo'?demoView(lead,detail):card.tab==='materials'?materialsView(lead):historyView(lead,detail));
     wireActions(card.mount);wireCardForms(card,lead);
+    const preview=$('#liDemoPreview',card.mount);if(preview&&lead?.demo?.html)preview.srcdoc=lead.demo.html;
     $$('details',card.mount).forEach(el=>{if(openSections.has($('summary',el)?.textContent))el.open=true;});
     if($('#drawer'))$('#drawer').scrollTop=scroll;
   }
   function researchView(lead,detail){
     const research=researchOf(lead),jobs=arr(detail?.jobs).filter(activeJob),score=lead?.score||research?.score;
     let html=lead?.excluded?message('Компания исключена из автоматической и ручной обработки. Изменить это можно в разделе «История».'):'';
-    if(jobs.length)html+=`<div class="li-mini-jobs">${jobs.map(j=>`<div>${badge(j.kind==='deep'?'Deep Research':'Quick Scan')} ${esc(statusLabel(j.status))}</div>`).join('')}</div>`;
+    if(jobs.length)html+=`<div class="li-mini-jobs">${jobs.map(j=>`<div>${badge(j.kind==='demo'?'Демо сайта':j.kind==='deep'?'Deep Research':'Quick Scan')} ${esc(statusLabel(j.status))}</div>`).join('')}</div>`;
     if(!research)return html+empty('Исследования пока нет','Запусти Quick Scan для первичной проверки или Deep Research для подробного исследования. Отсутствие оценки ничего не говорит о качестве компании.');
     const business=research.business||{},site=research.officialSite||{},signals=arr(research.signals),opportunities=arr(research.opportunities);
     const industry=business.industry==='unknown'?'':business.industry;
@@ -418,6 +417,24 @@
     const psi=technical.pagespeed||technical.pageSpeed;
     return (rows.length?countRows(rows):'')+(psi?`<p><b>PageSpeed:</b> ${esc(({not_configured:'Измерение не подключено',unavailable:'Измерение недоступно',measured:'Измерено'})[psi.status]||'Данные не подтверждены')}${Number.isFinite(psi.performance)?' · '+Math.round(psi.performance)+'/100':''}${psi.checkedAt?' · '+esc(date(psi.checkedAt)):''}</p>`:'<p class="mut">Измерение PageSpeed не предоставлено. Оценка скорости не предполагается.</p>');
   }
+  function auditView(lead,detail){
+    const a=researchOf(lead)?.audit,findings=arr(a?.findings),working=arr(detail?.jobs).some(j=>j.kind==='deep'&&activeJob(j));
+    const disabled=!canEdit()||!canRunDeep()||state.busy||lead?.excluded||lead?.opted_out||working;
+    return `<p>Конкретные наблюдения с адресом страницы, датой, шагами проверки и вариантом исправления. Правовые вопросы отмечаются как требующие проверки применимости.</p><div class="row-inline">${button(working?'Проверка выполняется':'Проверить сайт','audit-site','',disabled,true)}${button('Скачать весь пакет .zip','download-kit')}</div><p class="mut li-caption">Новая проверка использует глубокое исследование. ${usesPlan()&&state.snapshot?.settings?.aiEnabled?'AI-материалы расходуют лимиты подключённой подписки.':''}</p>
+      ${!a||a.status!=='completed'?message('Замеры сайта ещё не получены. Сохраняем статус «не проверено», пока не удастся прочитать и подтвердить сайт компании.'):message('Проверено '+date(a.checkedAt)+'. Страниц: '+arr(a.pages).length+'. Наблюдений: '+findings.length+'.')}
+      ${a?.legalReviewDue?message('Справочник правовых норм требует обновления. Перепроверь редакцию перед использованием отчёта.','error'):''}
+      ${findings.map(f=>`<article class="li-audit-finding"><div class="li-section-head"><h4>${esc(f.title)}</h4>${badge(f.certainty==='observed'?'Наблюдение':'Проверить вручную',f.certainty==='observed'?'partial':'unknown')}</div><p>${esc(f.observation)}</p><p>${safeLink(f.url)} · ${esc(date(f.checkedAt))}</p><details class="li-details"><summary>Проверка и исправление</summary><p><b>Как воспроизвести:</b> ${esc(f.reproduce)}</p><p><b>Что сделать:</b> ${esc(f.fix)}</p>${f.law?`<p><b>Норма:</b> ${safeLink(f.law.url,f.law.title)}</p><p>${esc(f.law.condition)}</p><p class="mut">Редакция проверялась: ${esc(f.law.reviewedAt)}</p>`:''}</details></article>`).join('')}
+      <details class="li-details" open><summary>Что удалось проверить</summary>${arr(a?.pages).map(p=>`<p>${safeLink(p.url)} · ${esc(date(p.checkedAt))}</p>`).join('')}${arr(a?.limitations).map(l=>`<p class="mut">${esc(l)}</p>`).join('')||'<p class="mut">Проверка сайта ещё не выполнялась. Отсутствие замечаний не подтверждает соответствие всем требованиям.</p>'}</details>`;
+  }
+  function demoView(lead,detail){
+    const demo=lead?.demo,jobs=arr(detail?.jobs).filter(j=>j.kind==='demo'),job=jobs.find(j=>activeJob(j)||j.status==='paused')||jobs[0],s=state.snapshot?.settings||{};
+    const model=arr(chatgpt().models).find(m=>m.id===s.demoModel),blocked=!canEdit()||!canRunDeep()||!usesPlan()||!s.aiEnabled||!model||lead?.excluded||lead?.opted_out||job&&activeJob(job);
+    return `<p>Концепт с мобильной версией, информацией о компании и контактами. AI выбирает композицию и порядок подтверждённых фактов; фотографии и условия согласуются отдельно.</p><p>Модель демо: <b>${esc(model?.label||s.demoModel||'не выбрана')}</b>. Её можно изменить отдельно от исследования в настройках AI.</p>
+      ${!usesPlan()||!s.aiEnabled||!model?message('Для демо подключи подписку ChatGPT, включи AI и выбери модель демо в настройках исследований.'):message('Расходует лимиты подключённой подписки ChatGPT. Запуск — по кнопке, без автоматического повтора.')}
+      <div class="row-inline">${button(demo?'Подготовить новый вариант':'Подготовить демо','generate-demo','',blocked,true)}${demo?.html?button('Скачать сайт .html','download-demo')+button('Скачать весь пакет .zip','download-kit'):''}</div>
+      ${job?`<p role="status">Демо: ${esc(statusLabel(job.status))}${job.error_code?' · '+esc(errorLabel(job.error_code)):''}</p>`:''}
+      ${demo?.html?`<p class="mut li-caption">Сохранённый вариант: ${esc(date(demo.checkedAt))} · ${esc(demo.ai?.model||'модель не указана')}. Заявки не отправляются.</p><iframe id="liDemoPreview" title="Предпросмотр концепта сайта" sandbox="" referrerpolicy="no-referrer"></iframe>`:empty('Демо пока не подготовлено','Можно подготовить сайт и для компании, у которой своего сайта ещё нет. Контакты берутся из карточки; отсутствующие сведения не выдумываются.')}`;
+  }
   function getDraft(projectId,lead){
     const id=String(projectId),existing=state.drafts.get(id),revision=Number(lead?.materials_revision)||0,full=!!lead&&Object.hasOwn(lead,'materials');if(!existing||(!existing.dirty&&(existing.revision!==revision||(existing.provisional&&full)))){const m=lead?.materials||{};state.drafts.set(id,{revision,dirty:false,provisional:!full,materials:Object.fromEntries([...MATERIALS.map(([k])=>[k,String(m[k]||'')]),['followUps',arr(m.followUps).slice(0,3).map(String)]])});}return state.drafts.get(id);
   }
@@ -425,9 +442,9 @@
     const draft=getDraft(state.card.project.id,lead),editable=canEdit(),hasContent=MATERIALS.some(([k])=>draft.materials[k]);
     return `<p class="mut">Проверь факты и тон перед использованием. ${researchOf(lead)?.ai?.status==='generated'?'AI помог выбрать услугу и аргументы по проверенным источникам. Текст собран из шаблонов с доказательствами.':'Материалы основаны на доступных данных; наличие текста не подтверждает AI-генерацию.'}</p>
       ${!hasContent?message('Материалы пока не подготовлены. Запусти Deep Research или заполни их вручную.'):''}
-      <form id="liMaterialsForm"><fieldset${!editable?' disabled':''}>${MATERIALS.map(([key,label,max],index)=>`<details class="li-details"${index<2?' open':''}><summary>${label}</summary><label class="li-editor-label" for="liMaterial_${key}">${label}</label>${key==='emailSubject'?`<input id="liMaterial_${key}" data-material="${key}" maxlength="${max}" value="${esc(draft.materials[key])}">`:`<textarea id="liMaterial_${key}" data-material="${key}" rows="${key==='callScript'?8:5}" maxlength="${max}">${esc(draft.materials[key])}</textarea>`}</details>`).join('')}
+      <details class="li-details li-playbook" open><summary>Сценарий менеджера: варианты разговора</summary>${window.VCLeadKit.playbook(state.card.project,researchOf(lead)).map((step,i)=>`<details class="li-details"${i<2?' open':''}><summary>${esc(step.title)}</summary><p class="li-preserve-lines">${esc(step.body)}</p></details>`).join('')}<p class="mut">Стоимость рассчитывается индивидуально. Согласованную сумму и объём внеси в поле «Предложение Vertux» ниже.</p></details><form id="liMaterialsForm"><fieldset${!editable?' disabled':''}>${MATERIALS.map(([key,label,max],index)=>`<details class="li-details"${index<2?' open':''}><summary>${label}</summary><label class="li-editor-label" for="liMaterial_${key}">${label}</label>${key==='emailSubject'?`<input id="liMaterial_${key}" data-material="${key}" maxlength="${max}" value="${esc(draft.materials[key])}">`:`<textarea id="liMaterial_${key}" data-material="${key}" rows="${key==='callScript'?8:5}" maxlength="${max}">${esc(draft.materials[key])}</textarea>`}</details>`).join('')}
       <details class="li-details"><summary>Последующие письма</summary>${[0,1,2].map(i=>`<label class="li-followup">Вариант ${i+1}<textarea data-followup="${i}" rows="4" maxlength="3000">${esc(draft.materials.followUps[i]||'')}</textarea></label>`).join('')}</details></fieldset>
-      <div class="li-form-footer">${editable?`<button class="btn gold" type="submit"${state.busy?' disabled':''}>Сохранить материалы</button>`:''}${button('Скопировать всё','copy-materials')}${button('Скачать .txt','download-materials')}${button('Загрузить сохранённое','reload-materials')}</div><p id="liMaterialsMessage" class="mut" role="status">${draft.dirty?'Есть несохранённые изменения':'Версия '+draft.revision+' · черновики, без отправки'}</p></form>`;
+      <div class="li-form-footer">${editable?`<button class="btn gold" type="submit"${state.busy?' disabled':''}>Сохранить материалы</button>`:''}${button('Скопировать всё','copy-materials')}${button('Скачать .txt','download-materials')}${button('Скачать весь пакет .zip','download-kit')}${button('Загрузить сохранённое','reload-materials')}</div><p id="liMaterialsMessage" class="mut" role="status">${draft.dirty?'Есть несохранённые изменения':'Версия '+draft.revision+' · черновики, без отправки'}</p></form>`;
   }
   function historyView(lead,detail){
     const replies=arr(detail?.replies),draft=state.card.policyDraft,permission=draft?.contactPermission||lead?.contact_permission||{},editable=canEdit();
@@ -517,6 +534,13 @@
       }
       if(action==='reload-detail'){await loadDetail(card.project.id);return;}
       if(action==='copy-materials'){await copyMaterials();return;}
+      if(['download-kit','download-demo'].includes(action)){
+        const lead=state.details.get(String(card.project.id))?.lead,draft=getDraft(card.project.id,lead);
+        if(!lead){card.error='Сначала загрузи карточку компании.';renderCard();return;}
+        if(action==='download-demo'&&!lead.demo?.html)return;
+        const blob=action==='download-demo'?new Blob([lead.demo.html],{type:'text/html;charset=utf-8'}):new Blob([window.VCLeadKit.zipFiles(window.VCLeadKit.packageFiles(card.project,lead,draft.materials))],{type:'application/zip'});
+        const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=card.project.company.replace(/[<>:"/\\|?*\x00-\x1f]/g,'').slice(0,80)+(action==='download-demo'?'-концепт.html':'-материалы.zip');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
+      }
       if(action==='download-materials'){
         const url=URL.createObjectURL(new Blob([materialsText()],{type:'text/plain;charset=utf-8'})),link=document.createElement('a');link.href=url;link.download='Материалы — '+card.project.company.replace(/[<>:"/\\|?*\x00-\x1f]/g,'').slice(0,80)+'.txt';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
       }
@@ -525,6 +549,10 @@
         state.drafts.delete(String(card.project.id));await loadDetail(card.project.id);renderCard();return;
       }
       if(!canEdit())return;
+      if(action==='audit-site'||action==='generate-demo'){
+        if(!canRunDeep())return;
+        await perform('enqueue',{projectId:card.project.id,kind:action==='generate-demo'?'demo':'deep',force:true},result=>result.job?`${action==='generate-demo'?'Демо':'Проверка сайта'}: ${statusLabel(result.job.status)}. Результат появится в этой вкладке.`:'Новая задача не создана.');return;
+      }
       if(action==='enqueue'){
         if(el.dataset.kind==='deep'&&!canRunDeep())return;
         await perform('enqueue',{projectId:card.project.id,kind:el.dataset.kind,force:card.forceResearch===true},result=>{
@@ -551,5 +579,9 @@
       tabs[next].click();
     });
   }
-  window.VCLead={init,refresh,center,wireCenter,listFilters,filterProjects,listCells,wireList,mountCard,archiveCardControls,wireArchiveCard:wireActions};
+  function openCardTab(id,tab){
+    state.context.openProject(id);
+    if(state.card&&String(state.card.project.id)===String(id)){state.card.tab=tab;renderCard();ensure();if(configured())void loadDetail(id);}
+  }
+  window.VCLead={init,refresh,center,wireCenter,listFilters,filterProjects,listCells,wireList,mountCard,openCardTab,archiveCardControls,wireArchiveCard:wireActions};
 })();
