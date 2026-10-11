@@ -83,6 +83,38 @@ test('Astra-only accounts require explicit selection and empty catalogs never in
   await rejectsCode(empty.provider.complete(null, prompt), 'chatgpt_model_required');
 });
 
+test('large account catalogs discard model metadata and retain only visible picker fields', async () => {
+  const large = { ...small, instructions: 'fixture instructions '.repeat(40000), capabilities: { ignored: true } };
+  const { provider, state } = fixture({ models: [large, { slug: 'hidden', visibility: 'hidden' }] });
+  assert.ok(Buffer.byteLength(JSON.stringify({ models: [large] })) > 614466);
+  const catalog = await provider.listModels();
+  assert.deepEqual(catalog.models, [small]);
+  assert.equal(catalog.defaultModel, small.slug);
+  assert.ok(Buffer.byteLength(JSON.stringify(catalog)) < 1024);
+  assert.equal(state.calls.length, 1);
+  assert.equal(state.calls[0].url, MODELS);
+});
+
+test('catalog byte limit accepts the boundary and cancels larger advertised or streamed bodies', async () => {
+  const limit = 2 * 1024 * 1024;
+  const base = JSON.stringify({ models: [small], metadata: '' });
+  const exact = JSON.stringify({ models: [small], metadata: 'x'.repeat(limit - Buffer.byteLength(base)) });
+  assert.equal(Buffer.byteLength(exact), limit);
+  const accepted = fixture({ fetcher: () => new Response(exact) });
+  assert.deepEqual((await accepted.provider.listModels()).models, [small]);
+  for (const advertised of [false, true]) {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(exact + ' ')); },
+      cancel() { cancelled = true; },
+    });
+    const oversized = fixture({ fetcher: () => new Response(body, { headers: advertised ? { 'content-length': String(limit + 1) } : {} }) });
+    await rejectsCode(oversized.provider.listModels(), 'chatgpt_models_too_large');
+    assert.equal(cancelled, true);
+    assert.deepEqual(oversized.provider.models, []);
+  }
+});
+
 test('connection, direct permission, and verified account are required before token retrieval or fetch', async () => {
   for (const [status, code] of [
     [{ connected: false }, 'chatgpt_not_connected'],
@@ -260,8 +292,8 @@ test('caller cancellation aborts in-flight fetch and cannot result in generated 
 test('header, model body, stream bytes, output and prompt bounds stop oversized input', async () => {
   const header = fixture({ response: () => sse(event(completed()), { headers: { 'x-large': 'x'.repeat(33000) } }) });
   await rejectsCode(header.provider.complete('auto', prompt), 'chatgpt_response_too_large');
-  const catalog = fixture({ fetcher: () => json({ models: [], padding: 'x'.repeat(257000) }) });
-  await rejectsCode(catalog.provider.listModels(), 'chatgpt_response_too_large');
+  const catalog = fixture({ fetcher: () => json({ models: [], padding: 'x'.repeat(2 * 1024 * 1024) }) });
+  await rejectsCode(catalog.provider.listModels(), 'chatgpt_models_too_large');
   const stream = fixture({ maxResponseBytes: 1024, response: () => sse(':' + 'x'.repeat(2000) + '\n\n') });
   await rejectsCode(stream.provider.complete('auto', prompt), 'chatgpt_response_too_large');
   const delta = fixture({ maxOutputChars: 64, response: () => sse(event({ type: 'response.output_text.delta', delta: 'x'.repeat(65) })) });

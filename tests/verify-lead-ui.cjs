@@ -209,6 +209,17 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'evidence/lead-intell
       await page.locator('#leadCardMount [role=alert]').filter({hasText:'Достигнут лимит подписки ChatGPT'}).waitFor();assert.equal(await page.locator('#leadCardMount .li-limit-action a').getAttribute('href'),'https://chatgpt.com/settings/usage');assert.equal(await page.evaluate(()=>window.__fixture.lead.requests.filter(r=>r.action==='enqueue').length),before+1);await close();
       await page.evaluate(()=>window.__fixture.lead.jobs[0].error_code='plan_quota_exceeded');await page.evaluate(()=>window.VCLead.refresh(true));await hub('queue');await page.getByText('Дневной лимит AI-запросов Workspace исчерпан.',{exact:false}).waitFor();assert.equal(await page.locator('.li-job .li-limit-action a').getAttribute('href'),'https://chatgpt.com/settings/usage');
     });
+    await test('Catalog failure explains disabled AI and successful recheck unlocks explicit enable',async()=>{
+      await page.goto(origin+'/?chatgpt-active');await page.locator('#nextCallBtn').waitFor();await hub('settings');
+      await page.evaluate(()=>{window.__fixture.lead.settings.aiEnabled=false;window.__fixture.lead.capabilities.chatgpt.error='chatgpt_models_too_large';window.__fixture.lead.capabilities.chatgpt.models=[];});await page.evaluate(()=>window.VCLead.refresh(true));
+      await page.getByRole('alert').filter({hasText:'Каталог моделей ChatGPT превышает допустимый размер'}).waitFor();
+      assert.equal(await page.locator('[name=aiEnabled]').isDisabled(),true);assert.equal(await page.locator('[name=aiEnabled]').isChecked(),false);
+      assert.doesNotMatch(await page.locator('.li-plan-connection').innerText(),/Обработка не завершена/);
+      await page.evaluate(()=>{delete window.__fixture.lead.capabilities.chatgpt.error;window.__fixture.lead.connectChatgpt();});await page.getByRole('button',{name:'Проверить подключение',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'Состояние подключения обновлено'}).waitFor();assert.equal(await page.locator('.li-plan-connection [role=alert]').count(),0);
+      assert.equal(await page.locator('[name=aiEnabled]').isEnabled(),true);assert.equal(await page.locator('[name=aiEnabled]').isChecked(),false);
+      await page.locator('[name=aiEnabled]').check();assert.equal(await page.locator('[name=aiEnabled]').isChecked(),true);assert.equal(await page.evaluate(()=>window.__fixture.lead.settings.aiEnabled),false);
+    });
     await test('Other members cannot enable or manually trigger AI through a personal ChatGPT account',async()=>{
       await page.goto(origin+'/?manager&chatgpt-active');await page.locator('#nextCallBtn').waitFor();await hub('settings');
       await page.getByText('Управление личной подпиской доступно только её владельцу.',{exact:false}).waitFor();assert.equal(await page.locator('[name=aiEnabled]').isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Проверить подключение',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Отключить ChatGPT',exact:true}).count(),0);

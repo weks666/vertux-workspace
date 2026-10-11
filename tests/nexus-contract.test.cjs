@@ -92,7 +92,7 @@ assert.match(html, /script-src 'self' https:\/\/nexus\.vertux\.online/);
 assert.match(html, /connect-src 'self' https:\/\/nexus\.vertux\.online https:\/\/vertuxdb\.duckdns\.org wss:\/\/vertuxdb\.duckdns\.org https:\/\/zxcqweksn8n\.duckdns\.org;/);
 assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i);
 assert.doesNotMatch(html, /\sonclick=/i);
-assert.match(sw, /vertux-workspace-v26/);
+assert.match(sw, /vertux-workspace-v27/);
 assert.match(sw, /lead-intelligence\.js/);
 assert.match(sw, /lead-intelligence\.css/);
 assert.match(sw, /manifest\.webmanifest/);

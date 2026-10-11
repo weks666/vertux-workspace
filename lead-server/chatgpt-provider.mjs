@@ -7,6 +7,9 @@ import { LeadError } from './errors.mjs';
 // https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
 // https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery
 const MODELS_URL = 'https://api.openai.com/v1/models';
+// Account catalogs include model instructions and metadata, not just picker
+// labels. Bound the full JSON separately from the small catalog we return.
+const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const REQUIRED_SCOPE = 'chatgpt.tokens.use.direct';
 const USAGE_URL = 'https://chatgpt.com/settings/usage';
@@ -275,7 +278,13 @@ export function createChatGPTProvider({ credentials, fetcher = fetch, now = Date
     if (!force && catalog?.fingerprint === auth.fingerprint && now() - catalog.at < ttl) return catalog;
     const response = await fetchResponse(fetcher, MODELS_URL, { method: 'GET', headers: { Authorization: `Bearer ${auth.token}`, Accept: 'application/json' } }, signal);
     await requireOK(response, signal, now());
-    let value; try { value = JSON.parse(await readBoundedBody(response, { signal, maxBytes: 256000 })); } catch (cause) { if (cause instanceof LeadError || signal.aborted) throw cause; throw error('chatgpt_models_invalid'); }
+    let value;
+    try { value = JSON.parse(await readBoundedBody(response, { signal, maxBytes: MAX_CATALOG_BYTES })); }
+    catch (cause) {
+      if (cause?.code === 'chatgpt_response_too_large') throw error('chatgpt_models_too_large');
+      if (cause instanceof LeadError || signal.aborted) throw cause;
+      throw error('chatgpt_models_invalid');
+    }
     if (!Array.isArray(value?.models) || value.models.length > 500) throw error('chatgpt_models_invalid');
     const models = [], seen = new Set();
     for (const model of value.models) {
