@@ -23,3 +23,14 @@ test('local OAuth helper binds callback to the browser transaction and never ser
   assert.equal((await fetch(path,{headers:{Cookie:cookie}})).status,400);assert.equal(calls,1);
   assert.equal((await fetch(origin+'/chatgpt-auth.json')).status,404);
 });
+
+test('unsupported server region is distinct from account permission and does not expose provider text',async t=>{
+  const probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const port=probe.address().port;await new Promise(r=>probe.close(r));
+  const origin=`http://127.0.0.1:${port}`;
+  const credentials={async begin(){return {authorizationUrl:origin+'/auth/health?state=fixture-state'};},async callback(){throw Object.assign(new Error('fixture-private-provider-detail'),{code:'chatgpt_region_unsupported'});}};
+  const helper=await createChatGPTLoopback({credentials,port});t.after(()=>helper.close());
+  const start=await fetch(origin+'/auth/start',{method:'POST',headers:{Origin:origin},redirect:'manual'});
+  const cookie=start.headers.get('set-cookie').split(';')[0];
+  const response=await fetch(origin+'/auth/callback?state=fixture-state&code=fixture-code',{headers:{Cookie:cookie}});
+  assert.equal(response.status,403);const body=await response.text();assert.match(body,/OpenAI недоступен с этого сервера/);assert.match(body,/Повторный вход не устранит/);assert.doesNotMatch(body,/fixture-private|подписка недоступна/);
+});

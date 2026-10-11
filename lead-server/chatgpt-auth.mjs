@@ -138,7 +138,9 @@ export function createChatGPTCredentials({directory, fetcher = fetch, now = Date
     const response = await request(TOKEN, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'}, body: new URLSearchParams(body)}, signal);
     const data = await json(response);
     if (!response.ok) {
-      if (data.error === 'invalid_grant' || data.error === 'invalid_client') fail('chatgpt_reauthentication_required', 401);
+      const code = typeof data.error === 'string' ? data.error : data.error?.code;
+      if (code === 'unsupported_country_region_territory') fail('chatgpt_region_unsupported', 403);
+      if (code === 'invalid_grant' || code === 'invalid_client') fail('chatgpt_reauthentication_required', 401);
       fail('chatgpt_oauth_unavailable', 503);
     }
     return data;

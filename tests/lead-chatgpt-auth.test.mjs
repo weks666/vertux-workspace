@@ -99,6 +99,17 @@ test('issued registration survives invalid_grant without retaining unusable cred
   f.auth = f.newCredentials(); await f.begin(); assert.equal(f.params.get('client_id'), CLIENT); assert.equal(f.params.get('ext_agent_host_id'), host); assert.equal(f.params.has('id_token_hint'), false);
 });
 
+test('unsupported server region is reported without tokens, retries, or provider details', async t => {
+  const f = await fixture(t);
+  for(const error of ['unsupported_country_region_territory',{code:'unsupported_country_region_territory',message:'fixture-private-provider-detail'}]){
+    await f.begin();const before=f.tokenCalls;
+    f.grant=async()=>Response.json({error,error_description:'fixture-private-provider-detail'},{status:403});
+    await assert.rejects(f.callback(),e=>e.code==='chatgpt_region_unsupported'&&e.status===403&&!JSON.stringify(e).includes('fixture-private'));
+    assert.equal(f.tokenCalls,before+1);assert.equal((await f.auth.status()).connected,false);
+    const saved=await f.record();assert.equal(saved.client_id,CLIENT);assert.equal(saved.tokens,null);
+  }
+});
+
 test('identity-only or downgraded scope never authorizes inference', async t => {
   const f = await fixture(t); await f.connect(); await f.begin();
   f.grant = async () => Response.json({access_token: 'fixture-limited-access', refresh_token: 'fixture-limited-refresh', id_token: await f.identity(), token_type: 'Bearer', expires_in: 3600, scope: 'openid profile email offline_access'});
