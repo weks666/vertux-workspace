@@ -272,6 +272,16 @@ function saveRaw(project, patch){
   return task;
 }
 
+async function setArchived(ids, archived, reason='Перенесено менеджером'){
+  const unique=[...new Set(ids.map(String))];
+  if(!unique.length||unique.length>1000)throw new Error('Выбери от 1 до 1000 компаний.');
+  const stamp=new Date().toISOString(),patch={archived_at:archived?stamp:null,archive_reason:archived?String(reason).slice(0,300):null,updated_at:stamp};
+  const {data,error}=await db().from('projects').update(patch).in('id',unique).select('id');
+  if(error)throw error;
+  if(data?.length!==unique.length)throw new Error('Часть компаний недоступна. Обнови базу перед повтором.');
+  return patch;
+}
+
 const financeWrites=new Map();
 function saveMoney(project,patch){
   const id=String(project.id);
@@ -342,6 +352,8 @@ async function runImport(plan, mode, onProgress, meta){
   for(let i=0;i<toInsert.length;i+=100){
     const chunk=toInsert.slice(i,i+100).map(r=>({
       ...r, stage:'new', progress:5,
+      lead_batch_id:importMeta?.batch_id||null,
+      lead_batch_name:importMeta?String(meta.batchName||meta.file||'Импорт').slice(0,160):null,
       raw:importMeta?{ ...((r.raw&&typeof r.raw==='object')?r.raw:{}), _import:importMeta }:r.raw,
     }));
     say('добавляю '+(i+chunk.length)+' из '+toInsert.length+'…');
@@ -467,7 +479,7 @@ async function loadData(){
 window.VC = {
   CONFIG, loadData, loadProjects,
   safeHttpUrl, safeHttpsUrl, exactHttpsAssetUrl,
-  saveStage, saveNotes, saveDemo, savePatch, saveRaw, saveMoney,
+  saveStage, saveNotes, saveDemo, savePatch, saveRaw, saveMoney, setArchived,
   logCall, callsOf, aiCall, probeAI, leadCall, leadConfigured,
   readFileRows, fileFingerprint, findImported, rememberImport,
   detectFormat, mapRows, planImport, runImport,

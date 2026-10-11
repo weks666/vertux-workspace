@@ -46,7 +46,7 @@
   };
   const MATERIALS=[['summary','Кратко о компании',6000],['proposal','Предложение Vertux',6000],['callScript','Сценарий звонка',8000],['emailSubject','Тема письма',200],['emailBody','Первое письмо',6000],['icebreaker','Начало разговора',1200]];
   const state={context:null,snapshot:null,attempted:false,loading:false,loadedCount:0,watermark:null,error:'',notice:'',noticeJobId:null,busy:false,tab:'queue',jobFilter:'',settingsDraft:null,
-    filters:{industry:'',status:'',priority:'',service:'',freshness:''},details:new Map(),drafts:new Map(),card:null,timer:null};
+    filters:{industry:'',status:'',priority:'',service:'',freshness:'',batch:'',site:''},details:new Map(),drafts:new Map(),card:null,timer:null,archiveView:false,listNotice:''};
   const projects=()=>state.context?.getProjects()||[];
   const configured=()=>window.VC.leadConfigured();
   const canEdit=()=>state.context?.user?.can?.edit===true&&state.snapshot?.capabilities?.canEdit!==false;
@@ -144,17 +144,27 @@
     const status=lead?.status||researchOf(lead)?.status||'unknown';return {complete:'ready',completed:'ready',done:'ready',researching:'running',error:'failed'}[status]||status;
   }
   const statusLabel=key=>key==='excluded'?'Исключена':STATUS[key]||'Статус требует проверки';
-  const industryOf=(project,lead)=>lead?.industry||researchOf(lead)?.business?.industry||project.niche||'';
+  const briefOf=project=>project.raw?._researchBrief||{};
+  const industryOf=(project,lead)=>briefOf(project).industry||lead?.industry||researchOf(lead)?.business?.industry||project.niche||'';
   const servicesOf=lead=>arr((lead?.score||researchOf(lead)?.score)?.services).map(s=>typeof s==='string'?{id:s,label:SERVICES[s]||s}:s);
-  function listFilters(search=''){
-    const industries=[...new Set(projects().map(p=>industryOf(p,leadOf(p.id))).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  function listFilters(search='',archived=false){
+    if(state.archiveView!==archived)Object.keys(state.filters).forEach(k=>state.filters[k]='');
+    state.archiveView=archived;
+    const scope=projects().filter(p=>Boolean(p.archived_at)===archived),batches=new Map();scope.forEach(p=>{if(p.lead_batch_id)batches.set(p.lead_batch_id,p.lead_batch_name||'Без названия');});
+    if(state.filters.batch&&!batches.has(state.filters.batch))state.filters.batch='';
+    const industries=[...new Set(scope.map(p=>industryOf(p,leadOf(p.id))).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
     const serviceValues=new Map();arr(state.snapshot?.leads).forEach(l=>servicesOf(l).forEach(s=>serviceValues.set(s.id||s.label,s.label||SERVICES[s.id]||s.id)));
     const f=state.filters,disabled=state.snapshot?'':' disabled';
-    return `<div class="li-list-header"><div><b>Исследование компаний</b><span class="mut">${state.loading?'Обновляем…':state.snapshot?'Сигналы, приоритеты и источники':configured()?'Результаты ещё не загружены':'Сервис ещё не подключён'}</span></div>${button('Центр исследований','center')}</div>
+    const runCount=batches.size,runWord=runCount%10===1&&runCount%100!==11?'прогон':[2,3,4].includes(runCount%10)&&![12,13,14].includes(runCount%100)?'прогона':'прогонов';
+    return `<div class="li-list-header"><div><b>${archived?'Архив компаний':'Компании для работы'}</b><span class="mut">${scope.length} компаний · ${runCount} ${runWord}</span></div>${button(archived?'К текущей базе':'Открыть архив',archived?'active-list':'archive-list')}</div>
+      ${archived?message('Сохранены карточки, материалы и история. Компании из архива не участвуют в обзвоне и исследованиях.'):''}
+      ${state.listNotice?message(state.listNotice):''}
+      <div class="li-batch-tools"><label>Прогон<select data-li-filter="batch">${option('','Все прогоны',f.batch)}${[...batches].map(([id,name])=>option(id,name,f.batch)).join('')}</select></label>${f.batch&&canEdit()?button(archived?'Вернуть прогон в работу':'Перенести прогон в архив','archive-batch'):''}${button('Центр исследований','center')}</div>
       ${state.error&&configured()?message(state.error,'error'):''}
       <div class="li-filters" aria-label="Фильтры исследований">
         <label class="li-mobile-search">Поиск компании<input id="liCompanySearch" type="search" value="${esc(search)}" placeholder="Название, город, отрасль"></label>
         <label>Отрасль<select data-li-filter="industry">${option('','Все отрасли',f.industry)}${industries.map(i=>option(i,INDUSTRY[i]||i,f.industry)).join('')}</select></label>
+        <label>Сайт<select data-li-filter="site">${[['','Любой'],['not_found','Собственный сайт не найден'],['social_only','Только соцсети / мини-страница'],['verified','Есть собственный сайт']].map(([k,v])=>option(k,v,f.site)).join('')}</select></label>
         <label>Исследование<select data-li-filter="status"${disabled}>${option('','Все статусы',f.status)}${[['unknown','Не исследовано'],['queued','В очереди'],['running','Исследуется'],['ready','Готово'],['partial','Частичные данные'],['failed','Ошибка'],['excluded','Исключена'],['opted_out','Контакты запрещены'],['purged','Исследование удалено']].map(([k,v])=>option(k,v,f.status)).join('')}</select></label>
         <label>Приоритет<select data-li-filter="priority"${disabled}>${option('','Любой',f.priority)}${Object.entries(PRIORITY).map(([k,v])=>option(k,v,f.priority)).join('')}</select></label>
         <label>Услуга<select data-li-filter="service"${disabled}>${option('','Все услуги',f.service)}${[...serviceValues].map(([k,v])=>option(k,v,f.service)).join('')}</select></label>
@@ -166,6 +176,8 @@
     const f=state.filters,now=Date.now();
     return list.filter(p=>{
       const l=leadOf(p.id),r=researchOf(l),score=l?.score||r?.score,checked=l?.checked_at||r?.checkedAt,status=statusOf(l),time=checked?new Date(checked).getTime():NaN;
+      if(f.batch&&p.lead_batch_id!==f.batch)return false;
+      if(f.site&&briefOf(p).siteStatus!==f.site)return false;
       if(f.industry&&industryOf(p,l)!==f.industry)return false;
       if(f.status&&(f.status==='ready'?!['ready','completed','done'].includes(status):status!==f.status))return false;
       if(f.priority&&(score?.priority||'unknown')!==f.priority)return false;
@@ -177,12 +189,21 @@
     });
   }
   function listCells(project){
-    if(!state.snapshot)return `<td class="li-priority-cell">—</td><td class="li-state-cell">${esc(state.loading?'Загружаем…':configured()?'Результаты недоступны':'Сервис не подключён')}</td><td class="li-service-cell">—</td>`;
-    const lead=leadOf(project.id),r=researchOf(lead),score=lead?.score||r?.score,priority=score?.priority||'unknown';
-    return `<td class="li-priority-cell">${badge(score&&priority!=='unknown'?`${Number(score.total)||0} · ${PRIORITY[priority]||'Приоритет'}`:'Не определён',priority)}</td>
-      <td class="li-state-cell"><span>${esc(statusLabel(statusOf(lead)))}</span><small>${esc((lead?.checked_at||r?.checkedAt)?date(lead?.checked_at||r?.checkedAt):'Ещё не проверено')}</small></td>
-      <td class="li-service-cell">${esc(servicesOf(lead).map(s=>s.label||SERVICES[s.id]||s.id).join(', ')||'Пока не определена')}</td>`;
+    const lead=leadOf(project.id),r=researchOf(lead),b=briefOf(project),score=lead?.score||r?.score,priority=score?.priority||'unknown';
+    const reason=arr(score?.reasons).join(' ')||b.priorityReason||'Причина ещё не определена.',sources=arr(b.sources),checked=lead?.checked_at||r?.checkedAt||b.checkedAt;
+    return `<td class="li-business-cell"><p>${esc(b.summary||r?.business?.description||'Подробности доступны в карточке компании.')}</p>${b.opportunity?`<p><b>Что предложить:</b> ${esc(b.opportunity)}</p><small class="mut">Гипотеза · потребность уточнить</small>`:''}<div class="li-row-actions"><button class="mini" data-li-open="${esc(project.id)}" data-li-open-tab="research">Факты и источники</button><button class="mini" data-li-open="${esc(project.id)}" data-li-open-tab="materials">Материалы</button></div></td>
+      <td class="li-priority-cell">${badge(score&&priority!=='unknown'?`${Number(score.total)||0} · ${PRIORITY[priority]||'Приоритет'}`:'Не определён',priority)}<p>${esc(reason)}</p><small>${esc(b.season||'Сезонность не оценена.')}</small></td>
+      <td class="li-contact-cell">${project.phone?`<p>${esc(project.phone)}</p>`:'<small>Телефон не найден</small>'}${project.email?`<p>${esc(project.email)}</p>`:'<small>Email не найден</small>'}<p>${project.site?safeLink(project.site,'Сайт'):esc(b.siteStatus==='social_only'?'Только соцсети / мини-страница':b.siteStatus==='not_found'?'Собственный сайт не найден':'Сайт не подтверждён')}</p>${arr(b.channels).map(c=>safeLink(c.url,c.label)).join(' · ')}${sources.length?`<details><summary>Источники · ${sources.length}</summary>${sources.map(s=>`<p>${safeLink(s.url,s.title||'Источник')}</p>`).join('')}</details>`:''}</td>
+      <td class="li-state-cell"><span>${esc(b.method==='curated'?'Подборка по открытым источникам':state.snapshot?statusLabel(statusOf(lead)):state.loading?'Загружаем…':'Результаты недоступны')}</span><small>${esc(checked?date(checked):'Ещё не проверено')}</small><p>${esc(servicesOf(lead).map(s=>s.label||SERVICES[s.id]||s.id).join(', ')||b.service||'Услуга не определена')}</p><small>${esc(project.lead_batch_name||'Прогон не указан')}</small></td>`;
   }
+  async function archiveProjects(list,archived){
+    if(!canEdit()||state.busy||!list.length)return;
+    state.busy=true;state.listNotice='Сохраняем…';notify();
+    try{const patch=await window.VC.setArchived(list.map(p=>p.id),archived);list.forEach(p=>Object.assign(p,patch));state.listNotice=`${archived?'Перенесено в архив':'Возвращено в работу'}: ${list.length}.`;state.filters.batch='';await state.context.changed?.();await refresh(true);}
+    catch(e){state.listNotice='Не удалось завершить: '+e.message;}
+    finally{state.busy=false;notify();renderCard();}
+  }
+  function archiveCardControls(project){return `<div class="li-archive-control"><span class="mut">${esc(project.lead_batch_name||'Прогон не указан')}${project.archived_at?' · В архиве':''}</span>${canEdit()?button(project.archived_at?'Вернуть в работу':'В архив','archive-one'):''}</div>`;}
   function wireList(root){
     ensure();wireActions(root);
     $$('[data-li-filter]',root).forEach(el=>el.onchange=()=>{state.filters[el.dataset.liFilter]=el.value;notify();});
@@ -225,12 +246,12 @@
     if(canEdit()){
       if(['queued','pending','running','retry','retry_wait','retrying'].includes(job.status))controls.push(['pause','Пауза']);
       if(job.status==='paused')controls.push(['resume','Продолжить']);
-      if(['failed','cancelled','canceled'].includes(job.status))controls.push(['retry','Повторить']);
+      if(['failed','cancelled','canceled'].includes(job.status)&&!['archived','curated_import'].includes(job.error_code)&&!project?.archived_at)controls.push(['retry','Повторить']);
       if(activeJob(job)||job.status==='paused')controls.push(['cancel','Отменить']);
     }
-    return `<article class="li-job"><div class="li-job-main"><button class="li-text-button" type="button" data-li-open="${esc(job.project_id)}">${esc(project?.company||'Компания недоступна')}</button><span class="mut">${job.kind==='deep'?'Deep Research':'Quick Scan'} · попытка ${Number(job.attempts)||0}</span>${progressText?`<span>${esc(progressText)}</span>`:''}${job.error_code?`<span class="li-error-text">${esc(errorLabel(job.error_code))}</span>${limitAction(job.error_code)}`:''}${job.next_run_at?`<span class="mut">Следующий запуск: ${esc(date(job.next_run_at))}</span>`:''}</div><div class="li-job-status">${badge(statusLabel(job.status),job.status)}${controls.length?`<div class="li-job-actions">${controls.map(([op,label])=>button(label,'job',`data-job-id="${esc(job.id)}" data-job-op="${op}"`,['resume','retry'].includes(op)&&!canResumeJobs())).join('')}</div>`:''}</div></article>`;
+    return `<article class="li-job"><div class="li-job-main"><button class="li-text-button" type="button" data-li-open="${esc(job.project_id)}">${esc(project?.company||'Компания недоступна')}</button><span class="mut">${job.kind==='deep'?'Deep Research':'Quick Scan'} · попытка ${Number(job.attempts)||0}</span>${progressText?`<span>${esc(progressText)}</span>`:''}${job.error_code?`<span class="${['archived','curated_import'].includes(job.error_code)?'mut':'li-error-text'}">${esc(errorLabel(job.error_code))}</span>${limitAction(job.error_code)}`:''}${job.next_run_at&&activeJob(job)?`<span class="mut">Следующий запуск: ${esc(date(job.next_run_at))}</span>`:''}</div><div class="li-job-status">${badge(statusLabel(job.status),job.status)}${controls.length?`<div class="li-job-actions">${controls.map(([op,label])=>button(label,'job',`data-job-id="${esc(job.id)}" data-job-op="${op}"`,['resume','retry'].includes(op)&&!canResumeJobs())).join('')}</div>`:''}</div></article>`;
   }
-  function errorLabel(code){const labels={robots_denied:'Обход запрещён правилами сайта',robots_unavailable:'Правила обхода сайта недоступны',timeout:'Сайт не ответил вовремя',request_timeout:'Сайт не ответил вовремя',request_failed:'Не удалось прочитать сайт',dns_failed:'Не удалось определить адрес сайта',rate_limited:'Сайт ограничил частоту запросов',http_unavailable:'Сайт временно недоступен',job_interrupted:'Обработка прервана; проверь состояние задачи',worker_stopped:'Обработка остановлена при перезапуске сервера',no_site:'Официальный сайт не найден',daily_budget_exhausted:'Исчерпан дневной бюджет',company_budget_exhausted:'Исчерпан бюджет компании',budget_exceeded:'Лимит расходов исчерпан',lease_expired:'Задача прервана; сервер восстановит её',provider_unavailable:'Провайдер временно недоступен',not_public_address:'Адрес не подходит для публичного исследования',excluded:'Компания исключена',opted_out:'Компания отказалась от контактов'};return PLAN_ERRORS[code]||labels[code]||'Обработка не завершена. Обнови данные или повтори задачу.';}
+  function errorLabel(code){const labels={archived:'Компания в архиве; задача остановлена.',curated_import:'Исследование уже добавлено с подборкой.',robots_denied:'Обход запрещён правилами сайта',robots_unavailable:'Правила обхода сайта недоступны',timeout:'Сайт не ответил вовремя',request_timeout:'Сайт не ответил вовремя',request_failed:'Не удалось прочитать сайт',dns_failed:'Не удалось определить адрес сайта',rate_limited:'Сайт ограничил частоту запросов',http_unavailable:'Сайт временно недоступен',job_interrupted:'Обработка прервана; проверь состояние задачи',worker_stopped:'Обработка остановлена при перезапуске сервера',no_site:'Официальный сайт не найден',daily_budget_exhausted:'Исчерпан дневной бюджет',company_budget_exhausted:'Исчерпан бюджет компании',budget_exceeded:'Лимит расходов исчерпан',lease_expired:'Задача прервана; сервер восстановит её',provider_unavailable:'Провайдер временно недоступен',not_public_address:'Адрес не подходит для публичного исследования',excluded:'Компания исключена',opted_out:'Компания отказалась от контактов'};return PLAN_ERRORS[code]||labels[code]||'Обработка не завершена. Обнови данные или повтори задачу.';}
   function analyticsView(){
     const a=state.snapshot.analytics||{},u=state.snapshot.usage||{},leads=arr(state.snapshot.leads),priority=a.priorityCounts||Object.fromEntries(Object.keys(PRIORITY).map(k=>[k,leads.filter(l=>(l.score?.priority||'unknown')===k).length]));
     const replyCounts=a.replyCounts||{},plan=usesPlan();
@@ -376,11 +397,11 @@
     const industry=business.industry==='unknown'?'':business.industry;
     const audience=Array.isArray(business.audience)?business.audience.filter(value=>typeof value==='string'&&value.trim()).join(', '):typeof business.audience==='string'?business.audience.trim():'';
     const siteLabel=site.status==='verified'?'Официальный сайт':site.status==='candidate'?'Сайт-кандидат':'Сайт';
-    html+=`<div class="li-research-meta">${badge(statusLabel(lead?.status||research.status),research.status)}<span>${research.kind==='deep'?'Deep Research':'Quick Scan'}</span><span>Проверено: ${esc(date(lead?.checked_at||research.checkedAt))}</span></div>
+    html+=`<div class="li-research-meta">${badge(statusLabel(lead?.status||research.status),research.status)}<span>${research.kind==='curated'?'Подборка по открытым источникам':research.kind==='deep'?'Deep Research':'Quick Scan'}</span><span>Проверено: ${esc(date(lead?.checked_at||research.checkedAt))}</span></div>
       <p class="mut li-caption">Обновить до ${esc(date(lead?.expires_at||research.expiresAt))}</p>
       <div class="li-business"><h4>${esc(INDUSTRY[industry]||industry||'Отрасль не определена')}</h4><p>${esc(business.description||'Недостаточно данных для описания бизнеса.')}</p>${arr(business.services).length?`<p><b>Услуги:</b> ${esc(business.services.join(', '))}</p>`:''}${audience?`<p><b>Аудитория:</b> ${esc(audience)}</p>`:''}
-      <p><b>${siteLabel}:</b> ${site.url?safeLink(site.url):'Не подтверждён'}<br><span class="mut">${esc(site.reason||'')} · уверенность ${confidence(site.confidence)}</span></p></div>`;
-    if(score)html+=`<section class="li-score"><h4>Приоритет ${badge(PRIORITY[score.priority]||'Не определён',score.priority)}</h4><p>${score.priority==='unknown'?'Данных недостаточно для надёжной оценки.':`<strong class="li-score-value">${Number(score.total)||0}</strong> из 100 · оценка основана на измеримых факторах`}</p><details class="li-details"><summary>Почему такая оценка</summary><div class="li-score-parts">${(Array.isArray(score.components)?score.components:Object.entries(score.components||{}).map(([id,c])=>typeof c==='object'?{id,...c}:{id,value:c})).map(c=>`<div><b>${esc(c.label||WEIGHTS[c.id]||c.id)}</b><span>${esc(c.value??0)} / ${esc(c.max??'—')}</span><p>${esc(c.reason||'Причина не указана')}</p></div>`).join('')}</div>${arr(score.reasons).length?`<ul>${score.reasons.map(reason=>`<li>${esc(reason)}</li>`).join('')}</ul>`:''}</details>${servicesOf(lead).length?`<h4>Подходящие услуги Vertux</h4><ul class="li-service-list">${servicesOf(lead).map(s=>`<li><b>${esc(s.label||SERVICES[s.id]||s.id)}</b>${s.reason?`<p>${esc(s.reason)}</p>`:''}</li>`).join('')}</ul>`:''}</section>`;
+      <p><b>${siteLabel}:</b> ${site.url?safeLink(site.url):site.status==='not_found'?'Собственный сайт не найден':site.status==='social_only'?'Только соцсети / мини-страница':'Не подтверждён'}<br><span class="mut">${esc(site.reason||'')} · уверенность ${confidence(site.confidence)}</span></p></div>`;
+    if(score)html+=`<section class="li-score"><h4>Приоритет ${badge(PRIORITY[score.priority]||'Не определён',score.priority)}</h4><p>${score.priority==='unknown'?'Данных недостаточно для надёжной оценки.':`<strong class="li-score-value">${Number(score.total)||0}</strong> из 100 · ${score.method==='curated_heuristic'?'оценка для порядка работы, не вероятность покупки':'оценка основана на измеримых факторах'}`}</p><details class="li-details"><summary>Почему такая оценка</summary><div class="li-score-parts">${(Array.isArray(score.components)?score.components:Object.entries(score.components||{}).map(([id,c])=>typeof c==='object'?{id,...c}:{id,value:c})).map(c=>`<div><b>${esc(c.label||WEIGHTS[c.id]||c.id)}</b><span>${esc(c.value??0)} / ${esc(c.max??'—')}</span><p>${esc(c.reason||'Причина не указана')}</p></div>`).join('')}</div>${arr(score.reasons).length?`<ul>${score.reasons.map(reason=>`<li>${esc(reason)}</li>`).join('')}</ul>`:''}</details>${servicesOf(lead).length?`<h4>Подходящие услуги Vertux</h4><ul class="li-service-list">${servicesOf(lead).map(s=>`<li><b>${esc(s.label||SERVICES[s.id]||s.id)}</b>${s.reason?`<p>${esc(s.reason)}</p>`:''}</li>`).join('')}</ul>`:''}</section>`;
     html+=`<section class="li-research-section"><h4>Подтверждённые сигналы</h4>${signals.length?signals.map(evidenceItem).join(''):message('Подтверждённых сигналов пока недостаточно.')}</section>
       <section class="li-research-section"><h4>Возможности для обсуждения</h4><p class="mut">Гипотезы требуют проверки в разговоре с компанией.</p>${opportunities.length?opportunities.map(evidenceItem).join(''):message('Обоснованных возможностей пока не найдено.')}</section>`;
     if(arr(research.limitations).length)html+=`<section class="li-research-section"><h4>Что осталось неизвестным</h4><ul>${research.limitations.map(v=>`<li>${esc(typeof v==='string'?v:v.message||v.label||'Есть ограничения проверки')}</li>`).join('')}</ul></section>`;
@@ -424,7 +445,7 @@
       ${canConfigure()?`<details class="li-details li-danger"><summary>Удаление данных исследования</summary><p>Удаляются исследования, материалы и ответы этой компании. CRM-карточка и история звонков сохраняются.</p>${button('Удалить исследование','purge')}</details>`:''}`;
   }
   function eventsView(events){
-    const labels={enqueued:'Задача добавлена',enqueue_requested:'Запрошено исследование',queued:'Задача добавлена',completed:'Исследование завершено',failed:'Ошибка исследования',retry:'Запланирован повтор',paused:'Приостановлено',resumed:'Обработка продолжена',cancelled:'Задача отменена',materials_saved:'Материалы сохранены',materials_edited:'Материалы изменены',policy_saved:'Правила контакта сохранены',policy_changed:'Правила контакта изменены',reply_classified:'Ответ классифицирован',settings_saved:'Настройки изменены',settings_changed:'Настройки изменены',claimed:'Задача запущена',retried:'Повторный запуск',purged:'Данные исследования удалены',privacy_purge:'Данные исследования удалены',job_pause:'Задача приостановлена',job_resume:'Задача возобновлена',job_retry:'Задача запущена повторно',job_cancel:'Задача отменена',scheduled:'Выполнен плановый запуск',lease_expired:'Восстановление прерванной задачи'};
+    const labels={enqueued:'Задача добавлена',enqueue_requested:'Запрошено исследование',queued:'Задача добавлена',completed:'Исследование завершено',failed:'Ошибка исследования',retry:'Запланирован повтор',paused:'Приостановлено',resumed:'Обработка продолжена',cancelled:'Задача отменена',materials_saved:'Материалы сохранены',materials_edited:'Материалы изменены',policy_saved:'Правила контакта сохранены',policy_changed:'Правила контакта изменены',reply_classified:'Ответ классифицирован',settings_saved:'Настройки изменены',settings_changed:'Настройки изменены',claimed:'Задача запущена',retried:'Повторный запуск',purged:'Данные исследования удалены',privacy_purge:'Данные исследования удалены',job_pause:'Задача приостановлена',job_resume:'Задача возобновлена',job_retry:'Задача запущена повторно',job_cancel:'Задача отменена',scheduled:'Выполнен плановый запуск',lease_expired:'Восстановление прерванной задачи',company_archived:'Компания перенесена в архив',company_restored:'Компания возвращена в работу',curated_import:'Добавлена подборка по открытым источникам'};
     return events.length?`<ol class="li-events">${events.map(event=>`<li><b>${esc(labels[event.type||event.kind||event.event]||event.message||'Событие исследования')}</b><time>${esc(date(event.created_at||event.at))}</time>${event.project_id?`<span>${esc(projects().find(p=>String(p.id)===String(event.project_id))?.company||'')}</span>`:''}</li>`).join('')}</ol>`:'<p class="mut">Событий пока нет.</p>';
   }
   function wireCardForms(card,lead){
@@ -476,11 +497,14 @@
     renderCard();
   }
   function wireActions(root){
-    $$('[data-li-open]',root).forEach(el=>el.onclick=()=>state.context.openProject(el.dataset.liOpen));
+    $$('[data-li-open]',root).forEach(el=>el.onclick=e=>{e.stopPropagation();state.context.openProject(el.dataset.liOpen);if(el.dataset.liOpenTab)$(`[data-li-card-tab="${el.dataset.liOpenTab}"]`)?.click();});
     $$('[data-li-action]',root).forEach(el=>el.onclick=async()=>{
       const action=el.dataset.liAction,card=state.card;
       if(action==='refresh'){await refresh();return;}
       if(action==='center'){state.context.go('intelligence');return;}
+      if(action==='archive-list'||action==='active-list'){state.filters.batch='';state.context.go(action==='archive-list'?'archive':'projects');return;}
+      if(action==='archive-batch'){await archiveProjects(projects().filter(p=>Boolean(p.archived_at)===state.archiveView&&p.lead_batch_id===state.filters.batch),!state.archiveView);return;}
+      if(action==='archive-one'){await archiveProjects([card.project],!card.project.archived_at);state.context.openProject(card.project.id);return;}
       if(action==='settings-tab'){state.tab='settings';notify();return;}
       if(action==='reset-filters'){Object.keys(state.filters).forEach(k=>state.filters[k]='');notify();return;}
       if(action==='reset-settings'){state.settingsDraft=null;notify();return;}
@@ -527,5 +551,5 @@
       tabs[next].click();
     });
   }
-  window.VCLead={init,refresh,center,wireCenter,listFilters,filterProjects,listCells,wireList,mountCard};
+  window.VCLead={init,refresh,center,wireCenter,listFilters,filterProjects,listCells,wireList,mountCard,archiveCardControls,wireArchiveCard:wireActions};
 })();

@@ -19,6 +19,7 @@
   const ICONS={
     dashboard:'M3 3h7v8H3V3zm0 10h7v8H3v-8zm10-10h8v5h-8V3zm0 7h8v11h-8V10z',
     projects:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',
+    archive:'M3 4h18v5H3V4zm2 5v11h14V9M9 13h6',
     intelligence:'M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm6-2 6 6M6 10h8M10 6v8',
     calls:'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z',
     import:'M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2',
@@ -35,6 +36,7 @@
     {id:'dashboard',label:'Дашборд'},
     {id:'projects', label:'Проекты'},
     {id:'intelligence',label:'Исследования'},
+    {id:'archive',label:'Архив'},
     {id:'calls',    label:'Звонки'},
     {id:'trainer',  label:'Тренер'},
     {id:'money',    label:'Деньги', finance:true},
@@ -45,7 +47,8 @@
   ];
   const SUB={
     dashboard:'что происходит в агентстве',
-    projects:'база лидов — стадии, заметки, демки',
+    projects:'компании, факты, контакты и предложения',
+    archive:'предыдущие прогоны и история компаний',
     intelligence:'исследования компаний, очередь и контроль расходов',
     calls:'журнал звонков, выработка и аналитика',
     trainer:'live-суфлёр, разбор звонков, тренажёр',
@@ -194,7 +197,7 @@
     return out;
   }
   function funnelBars(){
-    const p=DATA.projects, total=p.length||1;
+    const p=DATA.projects.filter(p=>!p.archived_at), total=p.length||1;
     return `<div class="funnel">${FUNNEL.map(k=>{
       const n=p.filter(x=>stageOf(x)===k).length;
       return `<div class="fn-row"><span class="fn-l">${STAGES[k].label}</span>
@@ -247,7 +250,7 @@
   </div>`;
 
   V.dashboard=()=>{
-    const p=DATA.projects;
+    const p=DATA.projects.filter(p=>!p.archived_at);
     const withScript=p.filter(x=>x.processed).length;
     const inWork=p.filter(x=>['contacted','demo_sent','agreed'].includes(stageOf(x))).length;
     const paid=p.filter(x=>stageOf(x)==='paid').length;
@@ -304,10 +307,13 @@
     </div>`;
   };
 
+  V.archive=()=>V.projects();
   V.projects=()=>{
+    const archived=view==='archive',scope=DATA.projects.filter(p=>Boolean(p.archived_at)===archived);
+    const filters=window.VCLead.listFilters(q,archived);
     const chips=[['all','Все'],['new','Новые'],['work','В работе'],['callback','🔔 План звонков'],['redesign','Редизайн'],['creation','С нуля'],
                  ['processed','Со скриптом'],['raw','Сырые'],['demo','С демкой'],['hot','Рейтинг 4.5+']];
-    let list=DATA.projects.filter(p=>{
+    let list=scope.filter(p=>{
       if(pFilter==='all') return true;
       if(pFilter==='new') return stageOf(p)==='new';
       if(pFilter==='work') return ['contacted','demo_sent','agreed'].includes(stageOf(p));
@@ -324,20 +330,17 @@
     if(!DATA.projects.length) return `<div class="empty big"><div class="e-ic">📥</div>
       <div><b>В базе пусто.</b><br>Загрузи список из парсера или Рокфеллера в разделе «Импорт».</div></div>`;
     return `
-    ${window.VCLead.listFilters(q)}
+    ${filters}
     <div class="tbl-tools">
       ${chips.map(([k,l])=>`<button class="chip ${pFilter===k?'active':''}" data-filter="${k}">${l}</button>`).join('')}
-      <span class="mut count">Показано ${Math.min(projectLimit,list.length)} из ${list.length}${list.length!==DATA.projects.length?' · всего '+DATA.projects.length:''}</span>
+      <span class="mut count">Показано ${Math.min(projectLimit,list.length)} из ${list.length}${list.length!==scope.length?' · в разделе '+scope.length:''}</span>
     </div>
-    <div class="panel tbl-wrap"><table class="data leads"><thead><tr>
+    <div class="panel tbl-wrap li-company-table" tabindex="0" role="region" aria-label="Таблица компаний, прокручивается по горизонтали"><table class="data leads"><thead><tr>
       <th class="c-co">Компания</th>
-      <th>Приоритет</th><th>Исследование / проверка</th><th>Услуга Vertux</th>
-      <th class="c-ty">Тип</th>
+      <th>О компании и предложение</th><th>Приоритет и причина</th><th>Контакты и источники</th><th>Проверка и прогон</th>
       <th class="c-st">Стадия</th>
       <th class="c-nt">Заметка</th>
-      <th class="c-ra" title="Оценка компании в 2ГИС и число отзывов — берётся парсером. Высокая = живой бизнес, за репутацию держатся.">Рейтинг 2ГИС</th>
-      <th class="c-ph">Телефон</th>
-      <th class="c-dm">Демка</th>
+
     </tr></thead><tbody>
       ${list.slice(0,projectLimit).map(p=>{
         const k=stageOf(p), n=window.VC.callsOf(p).length;
@@ -346,24 +349,18 @@
         <td class="c-co"><div class="co">
           <div class="logo ${STAGES[k].cls}">${esc(initials(p.company))}</div>
           <div class="co-t"><span class="cn">${esc(p.company)}</span>
-            <span class="csub">${esc(String(p.niche||'—').slice(0,38))}${p.city?' · '+esc(p.city):''}</span></div>
+            <span class="csub">${esc(p.niche||'—')}${p.city?' · '+esc(p.city):''}</span><span class="csub">${esc(p.address||'Адрес не уточнён')}</span></div>
           ${isDue(p)?`<span class="due-badge" title="перезвонить ${fmtDay(nextCallOf(p))}">🔔 ${fmtDay(nextCallOf(p))}</span>`:''}
           ${n?`<span class="calls-badge" title="звонков: ${n}">${n}</span>`:''}
         </div></td>
         ${window.VCLead.listCells(p)}
-        <td>${typeTag(p.type)}</td>
         <td>${canEdit?`<select class="stage-sel ${STAGES[k].cls}" data-stage="${esc(p.id)}">
             ${Object.entries(STAGES).map(([sk,v])=>`<option value="${sk}"${sk===k?' selected':''}>${v.label}</option>`).join('')}
           </select>`:stagePill(p)}</td>
         <td class="c-nt">${canEdit?`<input class="note-in" data-note="${esc(p.id)}" value="${esc(p.notes||'')}" placeholder="пара слов…" maxlength="120" />`
           :`<span class="mut">${esc(p.notes||'—')}</span>`}</td>
-        <td class="c-ra">${p.rating?`<span class="rate"><b>${esc(rate(p.rating))}</b>${p.reviews?`<span class="rv">${esc(p.reviews)}&nbsp;отз.</span>`:''}</span>`:'<span class="mut">—</span>'}</td>
-        <td class="c-ph">${p.phone?(canEdit?`<button class="mini call" data-call="${esc(p.id)}" title="Набрать ${esc(p.phone)}">📞 ${esc(p.phone)}</button>`:esc(p.phone)):'<span class="mut">нет</span>'}</td>
-        <td class="c-dm">${demoUrl?`<a class="mini go" href="${esc(demoUrl)}" target="_blank" rel="noopener noreferrer">Открыть ↗</a>`
-          :(p.gen_prompt&&canEdit?`<button class="mini make" data-demo="${esc(p.id)}">Создать</button>`
-          :`<span class="mut" title="сначала нужен промпт из AI-разбора Rockefeller">Нужен AI-разбор</span>`)}</td>
       </tr>`;}).join('')}
-    </tbody></table></div>${list.length>projectLimit?'<button class="btn" id="projectsMore" style="margin-top:12px">Показать ещё 300</button>':''}`;
+    </tbody></table>${!list.length?'<p class="li-message">Нет компаний по выбранным фильтрам.</p>':''}</div>${list.length>projectLimit?'<button class="btn" id="projectsMore" style="margin-top:12px">Показать ещё 300</button>':''}`;
   };
 
   /* «Дозвон» = человек взял трубку (любой итог кроме «не взяли»). */
@@ -549,7 +546,7 @@
   }
 
   function leadSelect(id){
-    const opts=DATA.projects
+    const opts=DATA.projects.filter(p=>!p.archived_at)
       .filter(p=>p.call_script||p.issues||p.phone)
       .map(p=>`<option value="${esc(p.id)}"${String(p.id)===String(TR.leadId)?' selected':''}>${esc(p.company)}${p.call_script?' · скрипт':''}</option>`).join('');
     return `<select id="${id}" class="tr-lead" aria-label="Лид для тренировки" ${TR.busy?'disabled':''}><option value="">— без привязки к лиду —</option>${opts}</select>`;
@@ -795,7 +792,7 @@
   V.import=()=>{
     const canEdit=!!(USER&&USER.can&&USER.can.edit);
     if(!canEdit) return `<div class="hint"><span>🔒</span><div>Импортировать данные может основатель, администратор или менеджер.</div></div>`;
-    const rawN=DATA.projects.filter(p=>!p.processed).length;
+    const rawN=DATA.projects.filter(p=>!p.archived_at&&!p.processed).length;
     return `
     <div class="hint"><span>📥</span><div>Кидай сюда <b>CSV</b> или <b>XLSX</b> — из 2GIS-парсера (сырьё) или из Рокфеллера (готовый список со скриптами). Формат определится сам, а перед записью покажу, что изменится.</div></div>
     <div class="panel" style="margin-bottom:16px">
@@ -1079,7 +1076,7 @@
         </div>
       </div>
       <div class="li-card-tabs" id="leadCardTabs" role="tablist" aria-label="Разделы карточки компании"></div></div>
-      <div class="dr-body"><section id="leadCardMount" class="li-card" hidden role="tabpanel"></section><div id="leadCardCrm">
+      <div class="dr-body"><div id="liArchiveControl">${window.VCLead.archiveCardControls(p)}</div><section id="leadCardMount" class="li-card" hidden role="tabpanel"></section><div id="leadCardCrm">
         ${canEdit?`<div class="dr-sec">Стадия — ставь руками</div>
           <select id="stageSel" class="stage-sel wide ${STAGES[stageOf(p)].cls}">${Object.entries(STAGES).map(([k,v])=>
             `<option value="${k}"${stageOf(p)===k?' selected':''}>${v.label}</option>`).join('')}</select>
@@ -1146,6 +1143,7 @@
       </div></div>`;
     $('#drawer').classList.add('li-enabled');
     window.VCLead.mountCard(p,$('#leadCardMount'),$('#leadCardTabs'),$('#leadCardCrm'));
+    window.VCLead.wireArchiveCard($('#liArchiveControl'));
     if(!$('#drawer').classList.contains('open'))lastDrawerFocus=document.activeElement;
     $('#drawer').inert=false;$('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden','false');
     $('#drawerScrim').classList.add('open');
@@ -1320,7 +1318,7 @@
 
     if(view==='import') wireImport();
     if(view==='trainer') wireTrainer();
-    if(view==='projects') window.VCLead.wireList($('#view'));
+    if(['projects','archive'].includes(view)) window.VCLead.wireList($('#view'));
     if(view==='intelligence') window.VCLead.wireCenter($('#view'));
     if(SERVICE_SECTIONS.has(view)) void mountServiceModule(view);
     if(view==='profile'){
@@ -1345,7 +1343,7 @@
       if(window.speechSynthesis) window.speechSynthesis.cancel();
     }
     view=id;
-    if(view!=='projects') q='';
+    if(!['projects','archive'].includes(view)) q='';
     if(SERVICE_SECTIONS.has(previous)&&SERVICE_SECTIONS.has(view)){
       const module=$('#serviceModuleMount vertux-service-center');
       if(module){
@@ -1360,14 +1358,14 @@
   /* Режим обзвона: кому звонить прямо сейчас. Приоритет:
      просроченные напоминания → новые со скриптом (рейтинг выше — раньше) → новые → «связались». */
   function nextLead(){
-    const cand=window.WorkspaceCore.nextLead(DATA.projects);
+    const cand=window.WorkspaceCore.nextLead(DATA.projects.filter(p=>!p.archived_at));
     if(cand) openProject(cand.id);
     else alert('Некому звонить: ни напоминаний, ни новых лидов с телефоном.');
   }
 
   function renderNav(){
-    const raw=DATA.projects.filter(p=>stageOf(p)==='new').length;
-    const due=DATA.projects.filter(isDue).length;
+    const raw=DATA.projects.filter(p=>!p.archived_at&&stageOf(p)==='new').length;
+    const due=DATA.projects.filter(p=>!p.archived_at&&isDue(p)).length;
     const visible= NAV.filter(n=>!n.finance||(USER&&USER.can&&USER.can.finance));
     const navItems=(items)=>items
       .map(n=>`
@@ -1418,11 +1416,11 @@
 
   async function start(user){
     USER=user;
-    window.VCLead.init({user,getProjects:()=>DATA?.projects||[],visible:()=>['projects','intelligence'].includes(view)||$('#drawer').classList.contains('open'),onUpdate:()=>{
-      if(!DATA||!['projects','intelligence'].includes(view)||document.activeElement?.matches('#view input[data-note]')||(view==='projects'&&$('#drawer').classList.contains('open')))return;
+    window.VCLead.init({user,getProjects:()=>DATA?.projects||[],visible:()=>['projects','archive','intelligence'].includes(view)||$('#drawer').classList.contains('open'),onUpdate:()=>{
+      if(!DATA||!['projects','archive','intelligence'].includes(view)||document.activeElement?.matches('#view input[data-note]')||(['projects','archive'].includes(view)&&$('#drawer').classList.contains('open')))return;
       const focusedRow=document.activeElement?.matches('tr[data-id]')?document.activeElement.dataset.id:null;render();
       if(focusedRow)$(`tr[data-id="${CSS.escape(focusedRow)}"]`)?.focus();
-    },openProject,go,search:value=>{q=value.trim().toLowerCase();$('#globalSearch').value=value;render();}});
+    },openProject,go,changed:async()=>{renderNav();render();},search:value=>{q=value.trim().toLowerCase();$('#globalSearch').value=value;render();}});
     async function refreshData(){
       const button=$('#refreshBtn');button.disabled=true;
       try{DATA=await window.VC.loadData();}
@@ -1450,9 +1448,9 @@
         else if(!e.shiftKey&&(document.activeElement===last||!overlay.contains(document.activeElement))){e.preventDefault();first.focus();}
       }
     });
-    $('#refreshBtn').onclick=async()=>{await refreshData();if(view==='projects'||view==='intelligence')await window.VCLead.refresh();};
+    $('#refreshBtn').onclick=async()=>{await refreshData();if(['projects','archive','intelligence'].includes(view))await window.VCLead.refresh();};
     const s=$('#globalSearch');
-    s.oninput=()=>{if(view==='trainer'){TR.listening=false;trStopSTT();}q=s.value.trim().toLowerCase();if(view!=='projects')view='projects';render();};
+    s.oninput=()=>{if(view==='trainer'){TR.listening=false;trStopSTT();}q=s.value.trim().toLowerCase();if(!['projects','archive'].includes(view))view='projects';render();};
   }
 
   function showLogin(){
