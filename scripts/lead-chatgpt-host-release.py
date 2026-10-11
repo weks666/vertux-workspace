@@ -61,12 +61,20 @@ def main():
   members=tar.getmembers();need(set(m.name for m in members)==set(p['hashes']) and len(members)==len(p['hashes']),'archive_inventory_mismatch')
   for item in members:
    need(item.isfile() and not item.name.startswith('/') and '..' not in pathlib.PurePosixPath(item.name).parts,'unsafe_source_path')
-   target=RELEASE/item.name;target.parent.mkdir(parents=True,exist_ok=True);target.parent.chmod(0o755);target.write_bytes(tar.extractfile(item).read());target.chmod(0o644)
+   target=RELEASE/item.name;target.parent.mkdir(parents=True,exist_ok=True)
+   directory=target.parent
+   while directory!=RELEASE:
+    need(RELEASE in directory.parents,'source_directory_outside_release');directory.chmod(0o755);directory=directory.parent
+   if target.exists():need(hashlib.sha256(target.read_bytes()).hexdigest()==p['hashes'][item.name],'existing_source_changed')
+   else:target.write_bytes(tar.extractfile(item).read())
+   target.chmod(0o644)
  for name,digest in p['hashes'].items():need(hashlib.sha256((RELEASE/name).read_bytes()).hexdigest()==digest,'source_hash_mismatch')
  need(inspect('vertux-workspace-trainer')['Image']==IMAGE,'existing_node_image_changed')
+ dependency_probe="import assert from 'node:assert/strict';import{createRequire}from'node:module';const require=createRequire('/app/lead-server/chatgpt-auth.mjs');const file=require.resolve('jose');assert.ok(file.startsWith('/app/node_modules/jose/'));const jose=await import(file);assert.equal(typeof jose.jwtVerify,'function');assert.ok(globalThis.crypto.subtle);"
+ run(['docker','run','--rm','--network','none','--user','1000:1000','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','128m','--pids-limit','64','--mount','type=bind,src='+str(RELEASE)+',dst=/app,readonly','--entrypoint','node',IMAGE,'--input-type=module','-e',dependency_probe])
  previous=ROOT/'current-receipt.json'
  if previous.exists():
-  receipt=json.loads(previous.read_text());need(receipt['bundleSha256']==p['bundle'] and inspect(NAME)['State']['Running'],'existing_service_requires_review');print(json.dumps(receipt));return
+  receipt=json.loads(previous.read_text());need(receipt['bundleSha256']==p['bundle'] and inspect(NAME)['State']['Running'],'existing_service_requires_review');receipt['identityDependencyVerified']=True;write(previous,json.dumps(receipt,indent=2));print(json.dumps(receipt));return
  need(hashlib.sha256(NGINX.read_bytes()).hexdigest()==EXPECTED,'shared_nginx_changed')
  need(subprocess.run(['docker','inspect',NAME],stdout=subprocess.PIPE,stderr=subprocess.PIPE).returncode!=0,'service_already_exists')
  common=['--network','none','--user','1000:1000','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','128m','--memory-swap','128m','--cpus','0.35','--pids-limit','64','--tmpfs','/tmp:rw,noexec,nosuid,size=16m','--mount','type=bind,src='+str(RELEASE)+',dst=/app,readonly','--entrypoint','node']
@@ -118,7 +126,7 @@ def main():
    time.sleep(.5)
   else:raise RuntimeError('network_caller_gate_failed_'+str(observed[-1]))
   for name,cid in others.items():need(inspect(name)['Id']==cid and inspect(name)['State']['Running'],'existing_service_changed')
-  receipt={'status':'PERSONAL_CHATGPT_HOST_DEPLOYED_LOGIN_PENDING','at':stamp,'image':IMAGE,'containerId':inspect(NAME)['Id'],'bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'backupPath':str(backup),'nginxBeforeSha256':EXPECTED,'nginxAfterSha256':hashlib.sha256(candidate).hexdigest(),'isolatedTests':10,'memoryLimitMb':128,'dailyRequestCap':10,'modelRequests':0,'ownerSignInVerified':False,'existingContainersUnchanged':True}
+  receipt={'status':'PERSONAL_CHATGPT_HOST_DEPLOYED_LOGIN_PENDING','at':stamp,'image':IMAGE,'containerId':inspect(NAME)['Id'],'bundleSha256':p['bundle'],'fileHashes':p['hashes'],'release':str(RELEASE),'backupPath':str(backup),'nginxBeforeSha256':EXPECTED,'nginxAfterSha256':hashlib.sha256(candidate).hexdigest(),'isolatedTests':10,'identityDependencyVerified':True,'memoryLimitMb':128,'dailyRequestCap':10,'modelRequests':0,'ownerSignInVerified':False,'existingContainersUnchanged':True}
   write(previous,json.dumps(receipt,indent=2));print(json.dumps(receipt))
  except:
   if NGINX.read_bytes()==candidate:write(NGINX,old,0o644);run(['nginx','-t']);run(['systemctl','reload','nginx'])
